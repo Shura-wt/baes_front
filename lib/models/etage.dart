@@ -2,6 +2,8 @@ part of "../main.dart";
 
 // modele_batiment.dart
 class Etage {
+  static final List<Etage> allEtages = [];
+
   final int id;
   final String name;
   final int batimentId;
@@ -21,13 +23,27 @@ class Etage {
     if (json['baes'] != null) {
       baesList = (json['baes'] as List).map((e) => Baes.fromJson(e)).toList();
     }
-    return Etage(
-      id: json['id'],
-      name: json['name'],
-      batimentId: json['batiment_id'],
+
+    // Create the Etage instance
+    final etage = Etage(
+      id: json['id'] ?? 0,  // Use 0 if id is null
+      name: json['name'] ?? '',  // Use empty string if name is null
+      batimentId: json['batiment_id'] ?? 0,  // Use 0 if batiment_id is null
       carte: json['carte'] != null ? Carte.fromJson(json['carte']) : null,
       baes: baesList,
     );
+
+    // Check if an etage with the same ID already exists in the list
+    final existingIndex = allEtages.indexWhere((e) => e.id == etage.id);
+    if (existingIndex >= 0) {
+      // Replace the existing etage
+      allEtages[existingIndex] = etage;
+    } else {
+      // Add the new etage to the list
+      allEtages.add(etage);
+    }
+
+    return etage;
   }
 
   Map<String, dynamic> toJson() {

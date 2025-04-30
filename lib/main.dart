@@ -3,29 +3,40 @@ library baes_front;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:core';
-import 'dart:io';
 import 'dart:math';
 import 'dart:ui' as ui;
 
-import 'package:collection/collection.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:http_parser/http_parser.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
-import 'dart:html' as html;
 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
-import 'package:uuid/uuid.dart';
+import 'package:baes_front/config.dart';
+
+// Utils
+part 'utils/logger.dart';
+
+part 'utils/api_utils.dart';
+
+part 'utils/map_utils.dart';
+
+part 'utils/ui_utils.dart';
+
+// Services
+part 'services/baes_service.dart';
+
+part 'services/map_service.dart';
 
 // Widgets
 part 'widgets/drawer.dart';
 
-// part 'widgets/utilisateur_dialog.dart';
+part 'widgets/utilisateur_dialog.dart';
 
 part 'widgets/gradiant_background.dart';
 
@@ -34,9 +45,7 @@ part 'services/auth_provider.dart';
 
 part 'services/router_guard.dart';
 
-part 'services/image_to_tile.dart';
-
-part 'services/API_carte.dart';
+part 'services/api/carte_api.dart';
 
 part 'services/site_provider.dart';
 
@@ -73,22 +82,15 @@ part 'models/carte.dart';
 part 'models/site_association.dart';
 
 //API
-part 'models/api/utilisateur_api.dart';
+part 'services/api/utilisateur_api.dart';
 
-part 'models/api/site_api.dart';
+part 'services/api/site_api.dart';
 
-part 'models/api/BAES_api.dart';
+part 'services/api/BAES_api.dart';
 
-part 'models/api/etage_api.dart';
+part 'services/api/API_batiment.dart';
 
-part 'models/api/coordonee_api.dart';
-
-part 'models/api/batiment_api.dart';
-
-// Data
-part 'data/save.dart';
-
-part 'models/api/general.dart';
+part 'services/general.dart';
 
 void main() {
   runApp(

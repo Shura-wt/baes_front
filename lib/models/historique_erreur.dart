@@ -14,12 +14,14 @@ class HistoriqueErreur {
   });
 
   factory HistoriqueErreur.fromJson(Map<String, dynamic> json) {
-    return HistoriqueErreur(
+    final erreur = HistoriqueErreur(
       id: json['id'],
       baesId: json['baes_id'],
       typeErreur: json['type_erreur'],
       timestamp: DateTime.parse(json['timestamp']),
     );
+
+    return erreur;
   }
 
   Map<String, dynamic> toJson() {

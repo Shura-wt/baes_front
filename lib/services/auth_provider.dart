@@ -1,7 +1,7 @@
 part of '../main.dart';
 
 class AuthProvider with ChangeNotifier {
-  static const String baseUrl = 'http://localhost:5000';
+  static String baseUrl = Config.baseUrl;
 
   Utilisateur? _currentUser;
   int? _userId;
@@ -53,18 +53,23 @@ class AuthProvider with ChangeNotifier {
   Future<void> _fetchUserRoles(int userId) async {
     // Appel pour récupérer les rôles (si nécessaire)
     final rolesUrl = Uri.parse('$baseUrl/role/users/$userId/roles');
+
     final rolesResponse = await http.get(rolesUrl);
+
+    // Log the API response
 
     if (rolesResponse.statusCode == 200) {
       List<dynamic> rolesData = jsonDecode(rolesResponse.body);
       // Extraction des noms de rôles (peut être utile pour d'autres traitements)
-      List<String> roleNames = rolesData
-          .map<String>((roleData) => roleData['name'].toString())
-          .toList();
+      rolesData.map<String>((roleData) => roleData['name'].toString()).toList();
 
       // Appel pour récupérer les associations de sites (avec rôles) de l'utilisateur
       final sitesUrl = Uri.parse('$baseUrl/users/sites/$userId/sites');
+
       final sitesResponse = await http.get(sitesUrl);
+
+      // Log the API response
+
       List<SiteAssociation> sitesList = [];
       if (sitesResponse.statusCode == 200) {
         if (sitesResponse.body.isNotEmpty && sitesResponse.body != 'null') {
@@ -95,6 +100,7 @@ class AuthProvider with ChangeNotifier {
 
   Future<void> login(String username, String password) async {
     final url = Uri.parse('$baseUrl/auth/login');
+
     final response = await http.post(
       url,
       headers: {'Content-Type': 'application/json'},

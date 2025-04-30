@@ -1,6 +1,8 @@
 part of "../main.dart";
 
 class Baes {
+  static final List<Baes> allBaes = [];
+
   final int id;
   final String name;
   final Map<String, dynamic> position;
@@ -22,13 +24,27 @@ class Baes {
           .map((e) => HistoriqueErreur.fromJson(e))
           .toList();
     }
-    return Baes(
+
+    // Create the Baes instance
+    final baes = Baes(
       id: json['id'],
       name: json['name'],
       position: json['position'],
       etageId: json['etage_id'],
       erreurs: erreursList,
     );
+
+    // Check if a baes with the same ID already exists in the list
+    final existingIndex = allBaes.indexWhere((b) => b.id == baes.id);
+    if (existingIndex >= 0) {
+      // Replace the existing baes
+      allBaes[existingIndex] = baes;
+    } else {
+      // Add the new baes to the list
+      allBaes.add(baes);
+    }
+
+    return baes;
   }
 
   Map<String, dynamic> toJson() {

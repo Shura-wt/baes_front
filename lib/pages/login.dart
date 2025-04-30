@@ -82,12 +82,16 @@ class _LoginState extends State<LoginPage> {
                               Provider.of<AuthProvider>(context, listen: false);
                           try {
                             await authProvider.login(username, password);
-                            print(authProvider._currentUser?.globalRoles);
-                            if (authProvider.isAdmin ||
-                                authProvider.isSuperAdmin) {
-                              print("Admin ou Super Admin");
+
+                            // Initialisation du SiteProvider dès que l'utilisateur est authentifié.
+                            if (authProvider.currentUser != null &&
+                                authProvider.currentUser!.sites.isNotEmpty) {
+                              final defaultSite =
+                                  authProvider.currentUser!.sites.first;
+                              Provider.of<SiteProvider>(context, listen: false)
+                                  .setSelectedSite(defaultSite);
                             }
-                            // Si la connexion réussit, on peut naviguer vers la page d'accueil et recupere les données generales
+
                             await getGeneralInfos(context);
                             Navigator.pushReplacementNamed(context, '/home');
                           } catch (e) {

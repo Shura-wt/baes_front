@@ -78,6 +78,7 @@ class _HomePageState extends State<HomePage> {
 
     // Redirection si l'utilisateur n'est pas authentifié
     if (!authProvider.isAuthenticated) {
+      // ignore: use_build_context_synchronously
       Future.microtask(() => Navigator.pushReplacementNamed(context, '/login'));
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),
@@ -94,8 +95,7 @@ class _HomePageState extends State<HomePage> {
         bodyContent = const GestionCartePage();
         break;
       case 'utilisateurs':
-        bodyContent =
-            const Card(margin: EdgeInsets.all(15), child: TextField());
+        bodyContent = const GestionUtilisateursPage();
         break;
       default:
         bodyContent = const ViewCartePage();

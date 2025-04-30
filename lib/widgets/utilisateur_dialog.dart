@@ -1,181 +1,188 @@
-// part of '../main.dart';
-//
-// class _UtilisateurDialog extends StatefulWidget {
-//   final String title;
-//   final String confirmButtonText;
-//   final Utilisateur? initialUser;
-//
-//   const _UtilisateurDialog({
-//     super.key,
-//     required this.title,
-//     required this.confirmButtonText,
-//     this.initialUser,
-//   });
-//
-//   @override
-//   State<_UtilisateurDialog> createState() => _UtilisateurDialogState();
-// }
-//
-// class _UtilisateurDialogState extends State<_UtilisateurDialog> {
-//   final _formKey = GlobalKey<FormState>();
-//
-//   late TextEditingController _usernameController;
-//   late TextEditingController _rolesController;
-//   late TextEditingController _sitesController;
-//   late TextEditingController _passwordController;
-//
-//   @override
-//   void initState() {
-//     super.initState();
-//     _usernameController = TextEditingController(
-//       text: widget.initialUser?.login ?? '',
-//     );
-//     // Affichage des rôles séparés par des virgules
-//     _rolesController = TextEditingController(
-//       text: widget.initialUser != null
-//           ? widget.initialUser!.roles.join(', ')
-//           : '',
-//     );
-//     // Affichage des sites séparés par des virgules
-//     _sitesController = TextEditingController(
-//       text: widget.initialUser != null
-//           ? widget.initialUser!.sites.join(', ')
-//           : '',
-//     );
-//     _passwordController = TextEditingController();
-//   }
-//
-//   @override
-//   void dispose() {
-//     _usernameController.dispose();
-//     _rolesController.dispose();
-//     _sitesController.dispose();
-//     _passwordController.dispose();
-//     super.dispose();
-//   }
-//
-//   @override
-//   Widget build(BuildContext context) {
-//     // Récupération de l'utilisateur connecté via le Provider.
-//     final currentUser =
-//         Provider.of<AuthProvider>(context, listen: false).currentUser;
-//
-//     // Déterminer si le champ password doit être affiché :
-//     // - En création, toujours afficher.
-//     // - En modification, si l'utilisateur connecté est super-admin ou,
-//     //   s'il est admin et partage au moins un site avec l'utilisateur édité.
-//     bool canEditPassword = false;
-//     if (widget.initialUser == null) {
-//       canEditPassword = true;
-//     } else if (currentUser != null) {
-//       if (currentUser.roles.contains('super-admin')) {
-//         canEditPassword = true;
-//       } else if (currentUser.roles.contains('admin')) {
-//         // Vérifie si le user connecté partage au moins un site avec l'utilisateur édité.
-//         if (widget.initialUser!.sites
-//             .any((s) => currentUser.sites.contains(s))) {
-//           canEditPassword = true;
-//         }
-//       }
-//     }
-//
-//     return AlertDialog(
-//       title: Text(widget.title),
-//       content: SingleChildScrollView(
-//         child: Form(
-//           key: _formKey,
-//           child: Column(
-//             mainAxisSize: MainAxisSize.min,
-//             children: [
-//               // Champ Username.
-//               TextFormField(
-//                 controller: _usernameController,
-//                 decoration: const InputDecoration(labelText: 'Username'),
-//                 validator: (value) {
-//                   if (value == null || value.isEmpty) {
-//                     return 'Veuillez saisir un username.';
-//                   }
-//                   return null;
-//                 },
-//               ),
-//               // Champ Roles (séparés par des virgules).
-//               TextFormField(
-//                 controller: _rolesController,
-//                 decoration: const InputDecoration(
-//                   labelText: 'Roles (séparés par des virgules)',
-//                 ),
-//                 validator: (value) {
-//                   if (value == null || value.isEmpty) {
-//                     return 'Veuillez saisir au moins un rôle.';
-//                   }
-//                   return null;
-//                 },
-//               ),
-//               // Champ Sites (séparés par des virgules).
-//               TextFormField(
-//                 controller: _sitesController,
-//                 decoration: const InputDecoration(
-//                   labelText: 'Sites (séparés par des virgules)',
-//                 ),
-//                 validator: (value) {
-//                   if (value == null || value.isEmpty) {
-//                     return 'Veuillez saisir au moins un site.';
-//                   }
-//                   return null;
-//                 },
-//               ),
-//               // Champ Password, affiché conditionnellement.
-//               if (canEditPassword)
-//                 TextFormField(
-//                   controller: _passwordController,
-//                   decoration: const InputDecoration(labelText: 'Password'),
-//                   obscureText: true,
-//                   // Le champ n'est pas requis : laisser vide signifie ne pas modifier le mot de passe.
-//                 ),
-//             ],
-//           ),
-//         ),
-//       ),
-//       actions: [
-//         TextButton(
-//           onPressed: () => Navigator.of(context).pop(null),
-//           child: const Text('Annuler'),
-//         ),
-//         ElevatedButton(
-//           onPressed: () {
-//             if (_formKey.currentState!.validate()) {
-//               final username = _usernameController.text.trim();
-//               final rolesText = _rolesController.text.trim();
-//               final sitesText = _sitesController.text.trim();
-//               // Conversion en listes en séparant par des virgules.
-//               final roles = rolesText
-//                   .split(',')
-//                   .map((r) => r.trim())
-//                   .where((r) => r.isNotEmpty)
-//                   .toList();
-//               final sites = sitesText
-//                   .split(',')
-//                   .map((s) => s.trim())
-//                   .where((s) => s.isNotEmpty)
-//                   .toList();
-//               final password = _passwordController.text.trim();
-//
-//               final result = <String, dynamic>{
-//                 'username': username,
-//                 'roles': roles,
-//                 'sites': sites,
-//               };
-//               // Si l'utilisateur est autorisé à modifier le mot de passe et que le champ n'est pas vide,
-//               // on l'ajoute au résultat ; sinon, on laisse la clé "password" absente.
-//               if (canEditPassword && password.isNotEmpty) {
-//                 result['password'] = password;
-//               }
-//               Navigator.of(context).pop(result);
-//             }
-//           },
-//           child: Text(widget.confirmButtonText),
-//         ),
-//       ],
-//     );
-//   }
-// }
+part of '../main.dart';
+
+class UtilisateurDialog extends StatefulWidget {
+  final String title;
+  final String confirmButtonText;
+  final Utilisateur? initialUser;
+
+  const UtilisateurDialog({
+    super.key,
+    required this.title,
+    required this.confirmButtonText,
+    this.initialUser,
+  });
+
+  @override
+  State<UtilisateurDialog> createState() => _UtilisateurDialogState();
+}
+
+class _UtilisateurDialogState extends State<UtilisateurDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _usernameController = TextEditingController();
+  final _passwordController = TextEditingController();
+
+  List<String> _selectedRoles = [];
+  List<String> _selectedSites = [];
+
+  final List<String> _availableRoles = [
+    'user',
+    'admin',
+    'super-admin',
+    'technicien'
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+
+    // Si on modifie un utilisateur existant, on pré-remplit les champs
+    if (widget.initialUser != null) {
+      _usernameController.text = widget.initialUser!.login;
+      _selectedRoles = widget.initialUser!.globalRoles.toList();
+      _selectedSites =
+          widget.initialUser!.sites.map((site) => site.name).toList();
+    }
+  }
+
+  @override
+  void dispose() {
+    _usernameController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final siteProvider = Provider.of<SiteProvider>(context);
+
+    // Liste des sites disponibles
+    final availableSites =
+        siteProvider.completeSites.map((site) => site.name).toList();
+
+    return AlertDialog(
+      title: Text(widget.title),
+      content: Form(
+        key: _formKey,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Champ pour le nom d'utilisateur
+              TextFormField(
+                controller: _usernameController,
+                decoration: const InputDecoration(
+                  labelText: 'Nom d\'utilisateur',
+                  hintText: 'Entrez le nom d\'utilisateur',
+                ),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Veuillez entrer un nom d\'utilisateur';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+
+              // Champ pour le mot de passe (optionnel lors de la modification)
+              TextFormField(
+                controller: _passwordController,
+                decoration: InputDecoration(
+                  labelText: 'Mot de passe',
+                  hintText: widget.initialUser == null
+                      ? 'Entrez le mot de passe'
+                      : 'Laissez vide pour ne pas modifier',
+                ),
+                obscureText: true,
+                validator: (value) {
+                  if (widget.initialUser == null &&
+                      (value == null || value.isEmpty)) {
+                    return 'Veuillez entrer un mot de passe';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+
+              // Sélection des rôles
+              const Text('Rôles:',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              Wrap(
+                spacing: 8.0,
+                children: _availableRoles.map((role) {
+                  return FilterChip(
+                    label: Text(role),
+                    selected: _selectedRoles.contains(role),
+                    onSelected: (selected) {
+                      setState(() {
+                        if (selected) {
+                          _selectedRoles.add(role);
+                        } else {
+                          _selectedRoles.remove(role);
+                        }
+                      });
+                    },
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 16),
+
+              // Sélection des sites
+              const Text('Sites:',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              if (availableSites.isEmpty)
+                const Text('Aucun site disponible')
+              else
+                Wrap(
+                  spacing: 8.0,
+                  children: availableSites.map((site) {
+                    return FilterChip(
+                      label: Text(site),
+                      selected: _selectedSites.contains(site),
+                      onSelected: (selected) {
+                        setState(() {
+                          if (selected) {
+                            _selectedSites.add(site);
+                          } else {
+                            _selectedSites.remove(site);
+                          }
+                        });
+                      },
+                    );
+                  }).toList(),
+                ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Annuler'),
+        ),
+        TextButton(
+          onPressed: () {
+            if (_formKey.currentState!.validate()) {
+              if (_selectedRoles.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                      content: Text('Veuillez sélectionner au moins un rôle')),
+                );
+                return;
+              }
+
+              Navigator.pop(context, {
+                'username': _usernameController.text,
+                'password': _passwordController.text.isNotEmpty
+                    ? _passwordController.text
+                    : null,
+                'roles': _selectedRoles,
+                'sites': _selectedSites,
+              });
+            }
+          },
+          child: Text(widget.confirmButtonText),
+        ),
+      ],
+    );
+  }
+}
