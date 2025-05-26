@@ -15,6 +15,331 @@ class _LeftDrawerState extends State<LeftDrawer> {
   bool _showConnectionError = true;
   bool _showBatteryError = true;
 
+  // Variables pour stocker les versions
+  String _apiVersion = 'Chargement...';
+  String _appVersion = 'Chargement...';
+
+  // Variables pour le cache des versions
+  bool _apiVersionLoaded = false;
+  bool _appVersionLoaded = false;
+
+  // Static reference to the current instance
+  static _LeftDrawerState? _instance;
+
+  // Add these new variables for error polling
+  Timer? _errorPollingTimer;
+  int _lastKnownErrorId = 0;
+  HistoriqueErreur? _latestKnownError;
+  bool _isUpdatingErrors = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Set the static reference to this instance
+    _instance = this;
+    if (!_apiVersionLoaded) _loadApiVersion();
+    if (!_appVersionLoaded) _loadAppVersion();
+
+    // Initialize error polling
+    _initializeErrorPolling();
+  }
+
+  @override
+  void dispose() {
+    // Cancel the timer when the widget is disposed
+    _errorPollingTimer?.cancel();
+
+    // Clear the static reference if it's this instance
+    if (_instance == this) {
+      _instance = null;
+    }
+    super.dispose();
+  }
+
+  /// Static method to refresh the drawer UI
+  static void refreshDrawer() {
+    if (_instance != null && _instance!.mounted) {
+      // Fetch all errors to ensure UI is updated with the latest data
+      ErreurApi.getAllErrors().then((errors) {
+        if (errors.isNotEmpty) {
+          // Update all BAES with their errors
+          for (var error in errors) {
+            final baesIndex =
+                Baes.allBaes.indexWhere((b) => b.id == error.baesId);
+            if (baesIndex >= 0) {
+              final baes = Baes.allBaes[baesIndex];
+
+              // Get all errors for this BAES
+              final baesErrors =
+                  errors.where((e) => e.baesId == baes.id).toList();
+
+              // Create a new BAES with updated errors
+              final updatedBaes = Baes(
+                id: baes.id,
+                name: baes.name,
+                position: baes.position,
+                etageId: baes.etageId,
+                erreurs: baesErrors,
+              );
+
+              // Replace the old BAES in the static list
+              Baes.allBaes[baesIndex] = updatedBaes;
+            }
+          }
+
+          // Trigger a rebuild of the drawer with the updated data
+          if (_instance != null && _instance!.mounted) {
+            _instance!.setState(() {
+              // This empty setState will trigger a rebuild of the drawer
+              // with the updated error data
+            });
+          }
+        }
+      });
+    }
+  }
+
+  /// Initialize error polling system
+  Future<void> _initializeErrorPolling() async {
+    // First, get all errors
+    await _fetchAllErrors();
+
+    // Then set up a timer to poll for new errors every 5 seconds
+    _errorPollingTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      _fetchNewErrors();
+    });
+  }
+
+  /// Fetch all errors at startup
+  Future<void> _fetchAllErrors() async {
+    final errors = await ErreurApi.getAllErrors();
+
+    if (errors.isNotEmpty) {
+      setState(() {
+        // Get the highest error ID
+        _lastKnownErrorId =
+            errors.map((e) => e.id).reduce((a, b) => a > b ? a : b);
+
+        // Find the latest error by timestamp
+        _latestKnownError =
+            errors.reduce((a, b) => a.timestamp.isAfter(b.timestamp) ? a : b);
+      });
+
+      // Update BAES status with these errors
+      _updateBaesStatus(errors);
+    }
+  }
+
+  /// Fetch the latest error and check if it's different from what we know
+  Future<void> _fetchNewErrors() async {
+    // If already updating, skip this cycle to prevent overlapping updates
+    if (_isUpdatingErrors) {
+      if (kDebugMode) {
+        print("Skipping error update cycle - update already in progress");
+      }
+      return;
+    }
+
+    _isUpdatingErrors = true;
+
+    try {
+      // Get the latest error from the server
+      final latestError = await ErreurApi.getLatestError();
+
+      // If there's no latest error, nothing to do
+      if (latestError == null) {
+        if (kDebugMode) {
+          print("No latest error found");
+        }
+        _isUpdatingErrors = false;
+        return;
+      }
+
+      if (kDebugMode) {
+        print(
+            "Latest error: ID=${latestError.id}, solved=${latestError.isSolved}, ignored=${latestError.isIgnored}");
+        if (_latestKnownError != null) {
+          print(
+              "Last known error: ID=${_latestKnownError!.id}, solved=${_latestKnownError!.isSolved}, ignored=${_latestKnownError!.isIgnored}");
+        } else {
+          print("No last known error");
+        }
+      }
+
+      // Check if we need to fetch new errors
+      bool needToFetchNewErrors = false;
+
+      // If we don't have a latest known error yet, or if the latest error ID is different
+      if (_latestKnownError == null ||
+          _latestKnownError!.id != latestError.id) {
+        needToFetchNewErrors = true;
+        if (kDebugMode) {
+          print("Need to fetch new errors: new error or different ID");
+        }
+      }
+      // If the IDs are the same but the status has changed
+      else if (_latestKnownError!.isSolved != latestError.isSolved ||
+          _latestKnownError!.isIgnored != latestError.isIgnored) {
+        needToFetchNewErrors = true;
+        if (kDebugMode) {
+          print("Need to fetch new errors: status changed");
+        }
+      }
+
+      // Update our reference to the latest error
+      _latestKnownError = latestError;
+
+      // If we need to fetch new errors, do so
+      if (needToFetchNewErrors) {
+        // If we don't have a last known error ID yet, fetch all errors
+        if (_lastKnownErrorId <= 0) {
+          if (kDebugMode) {
+            print("Fetching all errors (no last known ID)");
+          }
+          await _fetchAllErrors();
+          return;
+        }
+
+        // Handle case where latest error ID is less than our last known ID
+        // (this could happen if errors were deleted or if the server was reset)
+        if (latestError.id < _lastKnownErrorId) {
+          if (kDebugMode) {
+            print(
+                "Latest error ID (${latestError.id}) is less than last known ID ($_lastKnownErrorId). Fetching all errors.");
+          }
+          await _fetchAllErrors();
+          return;
+        }
+
+        // Fetch all errors after the last known ID
+        if (kDebugMode) {
+          print("Fetching errors after ID $_lastKnownErrorId");
+        }
+        final newErrors = await ErreurApi.getErrorsAfter(_lastKnownErrorId);
+
+        if (newErrors.isNotEmpty) {
+          if (kDebugMode) {
+            print("Found ${newErrors.length} new errors");
+          }
+
+          // Update the last known error ID
+          setState(() {
+            _lastKnownErrorId =
+                newErrors.map((e) => e.id).reduce((a, b) => a > b ? a : b);
+          });
+
+          // Update BAES status with the new errors
+          _updateBaesStatus(newErrors);
+        } else {
+          if (kDebugMode) {
+            print("No new errors found after ID $_lastKnownErrorId");
+          }
+        }
+      } else {
+        if (kDebugMode) {
+          print("No need to fetch new errors");
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print("Error in _fetchNewErrors: $e");
+      }
+    } finally {
+      // Always reset the flag when done, even if there was an error
+      _isUpdatingErrors = false;
+    }
+  }
+
+  /// Update BAES status based on errors
+  void _updateBaesStatus(List<HistoriqueErreur> errors) {
+    try {
+      // Group errors by BAES ID
+      final Map<int, List<HistoriqueErreur>> errorsByBaes = {};
+
+      for (var error in errors) {
+        if (!errorsByBaes.containsKey(error.baesId)) {
+          errorsByBaes[error.baesId] = [];
+        }
+        errorsByBaes[error.baesId]!.add(error);
+      }
+
+      // Update each BAES with its errors
+      for (var baesId in errorsByBaes.keys) {
+        // Find the BAES in the allBaes list
+        final baesIndex = Baes.allBaes.indexWhere((b) => b.id == baesId);
+
+        if (baesIndex >= 0) {
+          // Create a new BAES with updated errors
+          final baes = Baes.allBaes[baesIndex];
+          final updatedBaes = Baes(
+            id: baes.id,
+            name: baes.name,
+            position: baes.position,
+            etageId: baes.etageId,
+            erreurs: errorsByBaes[baesId]!,
+          );
+
+          // Replace the old BAES with the updated one
+          Baes.allBaes[baesIndex] = updatedBaes;
+        }
+      }
+
+      // Refresh the UI
+      if (mounted) {
+        setState(() {
+          // This empty setState will trigger a rebuild of the drawer
+        });
+      }
+
+      // Refresh the map view if it's open
+      _ViewCartePageState.refreshMapView();
+    } catch (e) {
+      if (kDebugMode) {
+        print("Error in _updateBaesStatus: $e");
+      }
+    }
+  }
+
+  // Méthode pour charger la version de l'API
+  Future<void> _loadApiVersion() async {
+    try {
+      final version = await getApiVersion();
+      if (mounted) {
+        setState(() {
+          _apiVersion = version;
+          _apiVersionLoaded = true;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _apiVersion = 'Erreur';
+          _apiVersionLoaded = true; // Marquer comme chargé même en cas d'erreur
+        });
+      }
+    }
+  }
+
+  // Méthode pour charger la version de l'application
+  Future<void> _loadAppVersion() async {
+    try {
+      final version = await getAppVersion();
+      if (mounted) {
+        setState(() {
+          _appVersion = version;
+          _appVersionLoaded = true;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _appVersion = 'Erreur';
+          _appVersionLoaded = true; // Marquer comme chargé même en cas d'erreur
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final authProvider = Provider.of<AuthProvider>(context);
@@ -24,8 +349,8 @@ class _LeftDrawerState extends State<LeftDrawer> {
     final List<SiteAssociation> sites = siteProvider.sites;
 
     // Utiliser l'ID du site pour la correspondance
-    final int? currentSiteId = siteProvider.selectedSite?.id ??
-        (sites.isNotEmpty ? sites.first.id : null);
+    // Ne pas sélectionner automatiquement le premier site si aucun site n'est sélectionné
+    final int? currentSiteId = siteProvider.selectedSite?.id;
 
     // Déterminer si l'utilisateur peut changer de site
     final bool canChangeSite =
@@ -75,40 +400,49 @@ class _LeftDrawerState extends State<LeftDrawer> {
                               color: const Color(0xFF045f78),
                               borderRadius: BorderRadius.circular(25),
                             ),
-                            child: DropdownButton<int>(
-                              isExpanded: true,
-                              // Ajout de cette propriété
-                              value: currentSiteId,
-                              icon: const Icon(Icons.arrow_drop_down,
-                                  color: Colors.white),
-                              dropdownColor: const Color(0xFF045f78),
-                              underline: Container(),
-                              onChanged: (int? newSiteId) {
-                                if (newSiteId != null) {
-                                  final selected = sites.firstWhere(
-                                    (site) => site.id == newSiteId,
-                                    orElse: () => sites.first,
-                                  );
-                                  siteProvider.setSelectedSite(selected);
-                                }
-                              },
-                              items: sites.map((site) {
-                                return DropdownMenuItem<int>(
-                                  value: site.id,
-                                  child: Text(
-                                    site.name,
-                                    // Possibilité de tronquer le texte si besoin
+                            child: sites.isEmpty
+                                ? const Text(
+                                    "Aucun site",
+                                    style: TextStyle(color: Colors.white),
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(color: Colors.white),
-                                  ),
-                                );
-                              }).toList(),
-                            )),
+                                  )
+                                : DropdownButton<int>(
+                                    isExpanded: true,
+                                    // Ajout de cette propriété
+                                    value: currentSiteId,
+                                    icon: const Icon(Icons.arrow_drop_down,
+                                        color: Colors.white),
+                                    dropdownColor: const Color(0xFF045f78),
+                                    underline: Container(),
+                                    onChanged: (int? newSiteId) {
+                                      if (newSiteId != null) {
+                                        final selected = sites.firstWhere(
+                                          (site) => site.id == newSiteId,
+                                          orElse: () => sites.first,
+                                        );
+                                        siteProvider.setSelectedSite(selected);
+                                      }
+                                    },
+                                    items: sites.map((site) {
+                                      return DropdownMenuItem<int>(
+                                        value: site.id,
+                                        child: Text(
+                                          site.name,
+                                          // Possibilité de tronquer le texte si besoin
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                              color: Colors.white),
+                                        ),
+                                      );
+                                    }).toList(),
+                                  )),
                       )
                     else
                       Text(
-                        // Affiche le nom du site sélectionné
-                        siteProvider.selectedSite?.name ?? "",
+                        // Affiche le nom du site sélectionné ou un message si aucun site n'est disponible
+                        sites.isEmpty
+                            ? "Aucun site disponible"
+                            : (siteProvider.selectedSite?.name ?? ""),
                         style:
                             const TextStyle(color: Colors.white, fontSize: 20),
                         overflow: TextOverflow.ellipsis,
@@ -156,6 +490,49 @@ class _LeftDrawerState extends State<LeftDrawer> {
                       ),
                     ],
                   ),
+                ),
+              ),
+              // Affichage des versions en bas du drawer
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  children: [
+                    // Version de l'application
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Text(
+                          "Version App : ",
+                          style: TextStyle(color: Colors.white70, fontSize: 12),
+                        ),
+                        Text(
+                          _appVersion,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    // Version de l'API
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Text(
+                          "Version API : ",
+                          style: TextStyle(color: Colors.white70, fontSize: 12),
+                        ),
+                        Text(
+                          _apiVersion,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -221,19 +598,33 @@ class _LeftDrawerState extends State<LeftDrawer> {
 
     for (var batiment in batiments) {
       for (var etage in batiment.etages) {
-        for (var baes in Baes.allBaes.where((b) => b.etageId == etage.id)) {
-          // Un BAES est en erreur s'il a des erreurs dans sa liste
-          if (baes.erreurs.isNotEmpty) {
-            // Filtrer selon les types d'erreurs sélectionnés
-            bool hasConnectionError =
-                baes.erreurs.any((e) => e.typeErreur == 'connection');
-            bool hasBatteryError =
-                baes.erreurs.any((e) => e.typeErreur == 'battery');
+        // Utiliser la méthode statique Baes.getBaesForFloor au lieu d'accéder directement à Baes.allBaes
+        for (var baes in Baes.getBaesForFloor(etage.id)) {
+          // Vérifier si le BAES a des erreurs actives (non résolues et non ignorées)
+          bool hasActiveErrors = baes.erreurs.any((e) =>
+              !e.isSolved &&
+              !e.isIgnored &&
+              ((_showConnectionError &&
+                      (e.typeErreur == 'connection' ||
+                          e.typeErreur == 'erreur_connexion')) ||
+                  (_showBatteryError &&
+                      (e.typeErreur == 'battery' ||
+                          e.typeErreur == 'erreur_batterie'))));
 
-            if ((_showConnectionError && hasConnectionError) ||
-                (_showBatteryError && hasBatteryError)) {
-              errorBaes.add(baes);
-            }
+          // Vérifier si le BAES a des erreurs ignorées (mais pas d'erreurs actives)
+          bool hasIgnoredErrors = !hasActiveErrors &&
+              baes.erreurs.any((e) =>
+                  e.isIgnored &&
+                  ((_showConnectionError &&
+                          (e.typeErreur == 'connection' ||
+                              e.typeErreur == 'erreur_connexion')) ||
+                      (_showBatteryError &&
+                          (e.typeErreur == 'battery' ||
+                              e.typeErreur == 'erreur_batterie'))));
+
+          // Ajouter le BAES à la liste s'il a des erreurs actives ou ignorées
+          if (hasActiveErrors || hasIgnoredErrors) {
+            errorBaes.add(baes);
           }
         }
       }
@@ -315,29 +706,53 @@ class BuildingTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Récupérer tous les BAES pour ce bâtiment
-    List<Baes> allBaesInBuilding = [];
-    for (var etage in batiment.etages) {
-      allBaesInBuilding
-          .addAll(Baes.allBaes.where((baes) => baes.etageId == etage.id));
-    }
+    // Récupérer tous les BAES pour ce bâtiment en utilisant la méthode statique
+    List<Baes> allBaesInBuilding = Baes.getBaesForBuilding(batiment.etages);
 
     final total = allBaesInBuilding.length;
 
-    // Compter les erreurs selon les filtres
-    int errors = 0;
+    // Compter les erreurs actives selon les filtres
+    int activeErrors = 0;
+    int ignoredErrors = 0;
     for (var baes in allBaesInBuilding) {
-      bool hasConnectionError =
-          baes.erreurs.any((e) => e.typeErreur == 'connection');
-      bool hasBatteryError = baes.erreurs.any((e) => e.typeErreur == 'battery');
+      // Vérifier les erreurs actives (non résolues et non ignorées)
+      bool hasActiveConnectionError = baes.erreurs.any((e) =>
+          (e.typeErreur == 'connection' ||
+              e.typeErreur == 'erreur_connexion') &&
+          !e.isSolved &&
+          !e.isIgnored);
+      bool hasActiveBatteryError = baes.erreurs.any((e) =>
+          (e.typeErreur == 'erreur_batterie') && !e.isSolved && !e.isIgnored);
 
-      if ((showConnectionError && hasConnectionError) ||
-          (showBatteryError && hasBatteryError)) {
-        errors++;
+      // Vérifier les erreurs ignorées
+      bool hasIgnoredConnectionError = baes.erreurs.any((e) =>
+          (e.typeErreur == 'connection' ||
+              e.typeErreur == 'erreur_connexion') &&
+          e.isIgnored);
+      bool hasIgnoredBatteryError = baes.erreurs
+          .any((e) => (e.typeErreur == 'erreur_batterie') && e.isIgnored);
+
+      if ((showConnectionError && hasActiveConnectionError) ||
+          (showBatteryError && hasActiveBatteryError)) {
+        activeErrors++;
+      } else if ((showConnectionError && hasIgnoredConnectionError) ||
+          (showBatteryError && hasIgnoredBatteryError)) {
+        ignoredErrors++;
       }
     }
 
-    final errorChipColor = errors == 0 ? Colors.green : Colors.red;
+    // Déterminer la couleur du chip d'erreur
+    final Color errorChipColor;
+    if (activeErrors > 0) {
+      errorChipColor = Colors.red;
+    } else if (ignoredErrors > 0) {
+      errorChipColor = Colors.orange;
+    } else {
+      errorChipColor = Colors.green;
+    }
+
+    // Total des erreurs à afficher (actives + ignorées)
+    final errors = activeErrors + ignoredErrors;
 
     return Card(
       elevation: 2,
@@ -346,21 +761,47 @@ class BuildingTile extends StatelessWidget {
       child: ExpansionTile(
         title: Row(
           children: [
-            Text("Bâtiment ${batiment.name}",
-                style: Theme.of(context).textTheme.titleMedium),
-            const Spacer(),
-            Chip(
-              shape: CircleBorder(side: BorderSide(color: Colors.grey[300]!)),
-              label: Text("$total",
-                  style: const TextStyle(fontSize: 12, color: Colors.black)),
-              backgroundColor: Colors.grey[300],
+            Expanded(
+              child: Tooltip(
+                message: "Bâtiment ${batiment.name}",
+                child: Text(
+                  "Bâtiment ${batiment.name}",
+                  style: Theme.of(context).textTheme.titleMedium,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             ),
-            const SizedBox(width: 8),
-            Chip(
-              shape: CircleBorder(side: BorderSide(color: errorChipColor)),
-              label: Text("$errors",
-                  style: const TextStyle(fontSize: 12, color: Colors.white)),
-              backgroundColor: errorChipColor,
+            Container(
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(maxWidth: 40),
+              child: Tooltip(
+                message: "BAES dans le batiment",
+                child: Chip(
+                  padding: EdgeInsets.zero,
+                  shape:
+                      CircleBorder(side: BorderSide(color: Colors.grey[300]!)),
+                  label: Text("$total",
+                      style:
+                          const TextStyle(fontSize: 12, color: Colors.black)),
+                  backgroundColor: Colors.grey[300],
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            Container(
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(maxWidth: 40),
+              child: Tooltip(
+                message: "Erreurs dans le batiment",
+                child: Chip(
+                  padding: EdgeInsets.zero,
+                  shape: CircleBorder(side: BorderSide(color: errorChipColor)),
+                  label: Text("$errors",
+                      style:
+                          const TextStyle(fontSize: 12, color: Colors.white)),
+                  backgroundColor: errorChipColor,
+                ),
+              ),
             ),
           ],
         ),
@@ -393,26 +834,56 @@ class FloorTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Récupérer tous les BAES pour cet étage
-    final List<Baes> baesInFloor =
-        Baes.allBaes.where((baes) => baes.etageId == etage.id).toList();
+    // Récupérer tous les BAES pour cet étage en utilisant la méthode statique
+    final List<Baes> baesInFloor = Baes.getBaesForFloor(etage.id);
 
     final total = baesInFloor.length;
 
-    // Compter les erreurs selon les filtres
-    int errors = 0;
+    // Compter les erreurs actives selon les filtres
+    int activeErrors = 0;
+    int ignoredErrors = 0;
     for (var baes in baesInFloor) {
-      bool hasConnectionError =
-          baes.erreurs.any((e) => e.typeErreur == 'connection');
-      bool hasBatteryError = baes.erreurs.any((e) => e.typeErreur == 'battery');
+      // Vérifier les erreurs actives (non résolues et non ignorées)
+      bool hasActiveConnectionError = baes.erreurs.any((e) =>
+          (e.typeErreur == 'connection' ||
+              e.typeErreur == 'erreur_connexion') &&
+          !e.isSolved &&
+          !e.isIgnored);
+      bool hasActiveBatteryError = baes.erreurs.any((e) =>
+          (e.typeErreur == 'battery' || e.typeErreur == 'erreur_batterie') &&
+          !e.isSolved &&
+          !e.isIgnored);
 
-      if ((showConnectionError && hasConnectionError) ||
-          (showBatteryError && hasBatteryError)) {
-        errors++;
+      // Vérifier les erreurs ignorées
+      bool hasIgnoredConnectionError = baes.erreurs.any((e) =>
+          (e.typeErreur == 'connection' ||
+              e.typeErreur == 'erreur_connexion') &&
+          e.isIgnored);
+      bool hasIgnoredBatteryError = baes.erreurs.any((e) =>
+          (e.typeErreur == 'battery' || e.typeErreur == 'erreur_batterie') &&
+          e.isIgnored);
+
+      if ((showConnectionError && hasActiveConnectionError) ||
+          (showBatteryError && hasActiveBatteryError)) {
+        activeErrors++;
+      } else if ((showConnectionError && hasIgnoredConnectionError) ||
+          (showBatteryError && hasIgnoredBatteryError)) {
+        ignoredErrors++;
       }
     }
 
-    final errorChipColor = errors == 0 ? Colors.green : Colors.red;
+    // Déterminer la couleur du chip d'erreur
+    final Color errorChipColor;
+    if (activeErrors > 0) {
+      errorChipColor = Colors.red;
+    } else if (ignoredErrors > 0) {
+      errorChipColor = Colors.orange;
+    } else {
+      errorChipColor = Colors.green;
+    }
+
+    // Total des erreurs à afficher (actives + ignorées)
+    final errors = activeErrors + ignoredErrors;
 
     return Card(
       elevation: 1,
@@ -421,21 +892,47 @@ class FloorTile extends StatelessWidget {
       child: ExpansionTile(
         title: Row(
           children: [
-            Text("Étage ${etage.name}",
-                style: Theme.of(context).textTheme.titleSmall),
-            const Spacer(),
-            Chip(
-              shape: CircleBorder(side: BorderSide(color: Colors.grey[300]!)),
-              label: Text("$total",
-                  style: const TextStyle(fontSize: 12, color: Colors.black)),
-              backgroundColor: Colors.grey[300],
+            Expanded(
+              child: Tooltip(
+                message: "Étage ${etage.name}",
+                child: Text(
+                  "Étage ${etage.name}",
+                  style: Theme.of(context).textTheme.titleSmall,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             ),
-            const SizedBox(width: 8),
-            Chip(
-              shape: CircleBorder(side: BorderSide(color: errorChipColor)),
-              label: Text("$errors",
-                  style: const TextStyle(fontSize: 12, color: Colors.white)),
-              backgroundColor: errorChipColor,
+            Container(
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(maxWidth: 40),
+              child: Tooltip(
+                message: "BAES dans l'étage",
+                child: Chip(
+                  padding: EdgeInsets.zero,
+                  shape:
+                      CircleBorder(side: BorderSide(color: Colors.grey[300]!)),
+                  label: Text("$total",
+                      style:
+                          const TextStyle(fontSize: 12, color: Colors.black)),
+                  backgroundColor: Colors.grey[300],
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            Container(
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(maxWidth: 40),
+              child: Tooltip(
+                message: "Erreurs dans l'étage",
+                child: Chip(
+                  padding: EdgeInsets.zero,
+                  shape: CircleBorder(side: BorderSide(color: errorChipColor)),
+                  label: Text("$errors",
+                      style:
+                          const TextStyle(fontSize: 12, color: Colors.white)),
+                  backgroundColor: errorChipColor,
+                ),
+              ),
             ),
           ],
         ),
@@ -468,38 +965,84 @@ class BAESTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Vérifier les erreurs
-    bool hasConnectionError =
-        baes.erreurs.any((e) => e.typeErreur == 'connection');
-    bool hasBatteryError = baes.erreurs.any((e) => e.typeErreur == 'battery');
+    // Vérifier les erreurs actives (non résolues et non ignorées)
+    bool hasConnectionError = baes.erreurs.any((e) =>
+        (e.typeErreur == 'connection' || e.typeErreur == 'erreur_connexion') &&
+        !e.isSolved &&
+        !e.isIgnored);
+    bool hasBatteryError = baes.erreurs.any((e) =>
+        e.typeErreur == 'erreur_batterie' && !e.isSolved && !e.isIgnored);
+
+    // Vérifier si des erreurs sont ignorées (et aucune active)
+    bool anyErrorIgnored = false;
+    bool allErrorsSolved = true;
+
+    if (baes.erreurs.isNotEmpty) {
+      // Vérifier si toutes les erreurs sont soit résolues soit ignorées
+      bool allErrorsHandled =
+          baes.erreurs.every((e) => e.isSolved || e.isIgnored);
+
+      // Si toutes les erreurs sont traitées, vérifier si certaines sont ignorées
+      if (allErrorsHandled) {
+        anyErrorIgnored = baes.erreurs.any((e) => e.isIgnored);
+        allErrorsSolved = baes.erreurs.every((e) => e.isSolved);
+      } else {
+        // Si toutes les erreurs ne sont pas traitées, alors toutes ne sont pas résolues
+        allErrorsSolved = false;
+      }
+    }
 
     return ListTile(
-      title: Text(
-        "BAES ID: ${baes.id} - ${baes.name}",
-        style: Theme.of(context)
-            .textTheme
-            .bodyLarge
-            ?.copyWith(color: Colors.black),
+      title: Tooltip(
+        message: "BAES ID: ${baes.id} - ${baes.name}",
+        child: Text(
+          "BAES ID: ${baes.id} - ${baes.name}",
+          style: Theme.of(context)
+              .textTheme
+              .bodyLarge
+              ?.copyWith(color: Colors.black),
+          overflow: TextOverflow.ellipsis,
+        ),
       ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Tooltip(
-            message: "Connexion",
-            child: Icon(
-              Icons.wifi,
-              color: hasConnectionError ? Colors.red : Colors.green,
+      trailing: SizedBox(
+        width: 70, // Fixed width to prevent overflow
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Tooltip(
+              message: "Connexion",
+              child: Icon(
+                Icons.wifi,
+                color: hasConnectionError
+                    ? Colors.red
+                    : anyErrorIgnored &&
+                            baes.erreurs.any((e) =>
+                                (e.typeErreur == 'connection' ||
+                                    e.typeErreur == 'erreur_connexion') &&
+                                e.isIgnored)
+                        ? Colors.orange
+                        : Colors.green,
+                size: 20, // Smaller icon
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Tooltip(
-            message: "Erreur batterie",
-            child: Icon(
-              Icons.battery_unknown_outlined,
-              color: hasBatteryError ? Colors.red : Colors.green,
+            const SizedBox(width: 4), // Reduced spacing
+            Tooltip(
+              message: "Erreur batterie",
+              child: Icon(
+                Icons.battery_unknown_outlined,
+                color: hasBatteryError
+                    ? Colors.red
+                    : anyErrorIgnored &&
+                            baes.erreurs.any((e) =>
+                                e.typeErreur == 'erreur_batterie' &&
+                                e.isIgnored)
+                        ? Colors.orange
+                        : Colors.green,
+                size: 20, // Smaller icon
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -524,43 +1067,228 @@ class ErrorBAESTile extends StatelessWidget {
           Batiment(id: 0, name: "Inconnu", polygonPoints: {}, etages: []),
     );
 
-    // Vérifier les erreurs
-    bool hasConnectionError =
-        baes.erreurs.any((e) => e.typeErreur == 'connection');
-    bool hasBatteryError = baes.erreurs.any((e) => e.typeErreur == 'battery');
-
     return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.0)),
-      child: ListTile(
-        title: Text(
-          "Bâtiment ${batiment.name} - Étage ${etage.name} - BAES ID: ${baes.id}",
-          style: Theme.of(context)
-              .textTheme
-              .bodyLarge
-              ?.copyWith(color: Colors.black),
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
+      color: Colors.red.shade100,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Tooltip(
-              message: "Connexion",
-              child: Icon(
-                Icons.wifi,
-                color: hasConnectionError ? Colors.red : Colors.green,
-              ),
+            Text(
+              "BAES: ${baes.name} (ID: ${baes.id})",
+              style: const TextStyle(fontWeight: FontWeight.bold),
             ),
-            const SizedBox(width: 8),
-            Tooltip(
-              message: "Erreur batterie",
-              child: Icon(
-                Icons.battery_unknown_outlined,
-                color: hasBatteryError ? Colors.red : Colors.green,
-              ),
+            Text(
+              "Bâtiment: ${batiment.name} - Étage: ${etage.name}",
+              style: const TextStyle(fontSize: 12),
             ),
+            const SizedBox(height: 8),
+            ...baes.erreurs
+                .map((error) => _buildErrorItem(context, error))
+                .toList(),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildErrorItem(BuildContext context, HistoriqueErreur error) {
+    // Get the AuthProvider to check user roles
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+
+    // Check if the user has permission to acknowledge errors
+    // Only technicians, admins, and super-admins can acknowledge errors
+    final bool canAcknowledgeErrors = authProvider.isTech ||
+        authProvider.isAdmin ||
+        authProvider.isSuperAdmin;
+
+    String errorType = error.typeErreur == 'connection' ||
+            error.typeErreur == 'erreur_connexion'
+        ? 'Erreur de connexion'
+        : error.typeErreur == 'erreur_batterie'
+            ? 'Erreur de batterie'
+            : 'Erreur inconnue';
+
+    String status = error.isSolved
+        ? 'Résolu'
+        : error.isIgnored
+            ? 'Ignoré'
+            : 'Non traité';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8.0),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text("Type: $errorType"),
+                Text("Date: ${error.timestamp.toString().substring(0, 16)}"),
+                Text("Statut: $status"),
+                if (error.acknowledgedBy != null)
+                  Text("Acquitté par: ${error.acknowledgedBy}"),
+              ],
+            ),
+          ),
+          // Only show acknowledgment buttons if the user has permission
+          if (!error.isSolved && canAcknowledgeErrors)
+            Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.check, color: Colors.green),
+                  onPressed: () =>
+                      _acknowledgeError(context, error, true, false),
+                  tooltip: 'Marquer comme résolu',
+                ),
+                if (!error.isIgnored)
+                  IconButton(
+                    icon: const Icon(Icons.block, color: Colors.orange),
+                    onPressed: () =>
+                        _acknowledgeError(context, error, false, true),
+                    tooltip: 'Ignorer',
+                  ),
+                if (error.isIgnored)
+                  IconButton(
+                    icon: const Icon(Icons.restore, color: Colors.blue),
+                    onPressed: () =>
+                        _acknowledgeError(context, error, false, false),
+                    tooltip: 'Ne plus ignorer',
+                  ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _acknowledgeError(BuildContext context, HistoriqueErreur error,
+      bool isSolved, bool isIgnored) async {
+    final success =
+        await ErreurApi.acknowledgeError(error.id, isSolved, isIgnored);
+
+    if (success) {
+      // Create a new HistoriqueErreur with updated status
+      final updatedError = HistoriqueErreur(
+        id: error.id,
+        baesId: error.baesId,
+        typeErreur: error.typeErreur,
+        timestamp: error.timestamp,
+        isSolved: isSolved,
+        isIgnored: isIgnored,
+        acknowledgedBy: error.acknowledgedBy,
+        acknowledgedAt: DateTime.now(),
+      );
+
+      // Find the BAES in the static list
+      final baesIndex = Baes.allBaes.indexWhere((b) => b.id == error.baesId);
+      if (baesIndex >= 0) {
+        final baes = Baes.allBaes[baesIndex];
+
+        // Create a new list of errors with the updated error
+        final updatedErrors = baes.erreurs
+            .map((e) => e.id == error.id ? updatedError : e)
+            .toList();
+
+        // Create a new BAES with the updated errors list
+        final updatedBaes = Baes(
+          id: baes.id,
+          name: baes.name,
+          position: baes.position,
+          etageId: baes.etageId,
+          erreurs: updatedErrors,
+        );
+
+        // Replace the old BAES in the static list
+        Baes.allBaes[baesIndex] = updatedBaes;
+      }
+
+      // Show success message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isSolved
+                ? 'Erreur marquée comme résolue'
+                : isIgnored
+                    ? 'Erreur ignorée'
+                    : 'Erreur réactivée',
+          ),
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      // Find the nearest LeftDrawer ancestor and trigger a rebuild
+      final leftDrawerState =
+          context.findAncestorStateOfType<_LeftDrawerState>();
+      if (leftDrawerState != null && leftDrawerState.mounted) {
+        leftDrawerState.setState(() {
+          // This empty setState will trigger a rebuild of the LeftDrawer
+        });
+      } else {
+        // Fallback: try to rebuild all children if we can't find the LeftDrawer
+        void rebuildAllChildren(BuildContext context) {
+          void rebuild(Element el) {
+            el.markNeedsBuild();
+            el.visitChildren(rebuild);
+          }
+
+          (context as Element).visitChildren(rebuild);
+        }
+
+        rebuildAllChildren(context);
+      }
+
+      // Refresh the map view if it's open
+      _ViewCartePageState.refreshMapView();
+
+      // Fetch all errors to ensure UI is updated
+      ErreurApi.getAllErrors().then((errors) {
+        if (errors.isNotEmpty) {
+          // Update all BAES with their errors
+          for (var error in errors) {
+            final baesIndex =
+                Baes.allBaes.indexWhere((b) => b.id == error.baesId);
+            if (baesIndex >= 0) {
+              final baes = Baes.allBaes[baesIndex];
+
+              // Get all errors for this BAES
+              final baesErrors =
+                  errors.where((e) => e.baesId == baes.id).toList();
+
+              // Create a new BAES with updated errors
+              final updatedBaes = Baes(
+                id: baes.id,
+                name: baes.name,
+                position: baes.position,
+                etageId: baes.etageId,
+                erreurs: baesErrors,
+              );
+
+              // Replace the old BAES
+              Baes.allBaes[baesIndex] = updatedBaes;
+            }
+          }
+
+          // Find the nearest LeftDrawer ancestor and trigger a rebuild again
+          final leftDrawerState =
+              context.findAncestorStateOfType<_LeftDrawerState>();
+          if (leftDrawerState != null && leftDrawerState.mounted) {
+            leftDrawerState.setState(() {
+              // This empty setState will trigger a rebuild of the LeftDrawer
+            });
+          }
+
+          // Refresh the map view again with the latest data
+          _ViewCartePageState.refreshMapView();
+        }
+      });
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Échec de l\'acquittement de l\'erreur'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 }

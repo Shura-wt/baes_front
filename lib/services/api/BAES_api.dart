@@ -44,6 +44,14 @@ class BaesApi {
       if (response.statusCode == 200) {
         // Créer une liste d'objets Baes à partir de la réponse
         final List<dynamic> jsonData = jsonDecode(response.body);
+
+        // Add etageId to each BAES JSON object if it's not already present
+        for (var json in jsonData) {
+          if (json is Map<String, dynamic> && json['etage_id'] == null) {
+            json['etage_id'] = etageId;
+          }
+        }
+
         return jsonData.map((json) => Baes.fromJson(json)).toList();
       } else {
         return [];
@@ -205,6 +213,36 @@ class BaesApi {
         return Baes.fromJson(jsonData);
       } else {
         // Error creating BAES
+        return null;
+      }
+    } catch (e) {
+      // Exception handling
+      return null;
+    }
+  }
+
+  /// Met à jour la position d'un BAES existant
+  static Future<Baes?> updateBaesPosition(
+      int baesId, Map<String, dynamic> position) async {
+    try {
+      // Préparer les données à envoyer
+      final Map<String, dynamic> data = {
+        'position': position,
+      };
+
+      // Envoyer la requête
+      final response = await http.put(
+        Uri.parse('$baseUrl/baes/$baesId'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(data),
+      );
+
+      if (response.statusCode == 200) {
+        // Créer un objet Baes à partir de la réponse
+        final jsonData = jsonDecode(response.body);
+        return Baes.fromJson(jsonData);
+      } else {
+        // Error updating BAES
         return null;
       }
     } catch (e) {

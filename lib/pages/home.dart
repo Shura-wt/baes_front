@@ -11,12 +11,23 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   late String _currentPage;
+  bool _sitesLoaded = false;
 
   @override
   void initState() {
     super.initState();
 
     _currentPage = widget.initialPage ?? 'home';
+
+    // Charger les sites associés à l'utilisateur courant (une seule fois)
+    if (!_sitesLoaded) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_sitesLoaded) {
+          Provider.of<SiteProvider>(context, listen: false).loadSites(context);
+          _sitesLoaded = true;
+        }
+      });
+    }
   }
 
   // Méthode pour créer un bouton de navigation.
@@ -42,7 +53,10 @@ class _HomePageState extends State<HomePage> {
     return TextButton(
       onPressed: () {
         if (!isActive) {
-          Navigator.pushReplacementNamed(context, route);
+          // Utiliser setState pour changer la page localement au lieu de naviguer
+          setState(() {
+            _currentPage = page;
+          });
         }
       },
       child: Column(
@@ -91,6 +105,11 @@ class _HomePageState extends State<HomePage> {
       case 'home':
         bodyContent = const ViewCartePage();
         break;
+
+      case 'view':
+        bodyContent = const VisualisationCartePage();
+        break;
+
       case 'carte':
         bodyContent = const GestionCartePage();
         break;
@@ -110,7 +129,7 @@ class _HomePageState extends State<HomePage> {
           title: _buildNavButton(
             context: context,
             page: 'home',
-            text: "Gestion bloc BAES",
+            text: "Carte du site",
             route: '/home',
             textStyle: const TextStyle(fontSize: 30),
           ),
@@ -121,6 +140,13 @@ class _HomePageState extends State<HomePage> {
                 page: 'carte',
                 text: "Gestion carte",
                 route: '/admin/carte',
+                textStyle: const TextStyle(fontSize: 30),
+              ),
+              _buildNavButton(
+                context: context,
+                page: 'view',
+                text: "Visualisation carte",
+                route: '/view',
                 textStyle: const TextStyle(fontSize: 30),
               ),
               _buildNavButton(

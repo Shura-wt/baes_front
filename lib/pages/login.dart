@@ -84,15 +84,22 @@ class _LoginState extends State<LoginPage> {
                             await authProvider.login(username, password);
 
                             // Initialisation du SiteProvider dès que l'utilisateur est authentifié.
+                            final siteProvider = Provider.of<SiteProvider>(
+                                context,
+                                listen: false);
+
+                            // Charger les sites associés à l'utilisateur courant
+                            await siteProvider.loadSites(context);
+
+                            // Sélectionner le premier site si l'utilisateur a des sites
                             if (authProvider.currentUser != null &&
                                 authProvider.currentUser!.sites.isNotEmpty) {
                               final defaultSite =
                                   authProvider.currentUser!.sites.first;
-                              Provider.of<SiteProvider>(context, listen: false)
-                                  .setSelectedSite(defaultSite);
+                              siteProvider.setSelectedSite(defaultSite);
                             }
 
-                            await getGeneralInfos(context);
+                            // await getGeneralInfos(context);
                             Navigator.pushReplacementNamed(context, '/home');
                           } catch (e) {
                             ScaffoldMessenger.of(context).showSnackBar(

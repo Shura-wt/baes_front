@@ -17,11 +17,17 @@ class Coords {
   });
 
   factory Coords.fromJson(Map<String, dynamic> json) {
+    // Add null checks for coordinate values
+    num? lat1Value = json['lat1'] as num?;
+    num? lng1Value = json['lng1'] as num?;
+    num? lat2Value = json['lat2'] as num?;
+    num? lng2Value = json['lng2'] as num?;
+
     return Coords(
-      lat1: (json['lat1'] as num).toDouble(),
-      lng1: (json['lng1'] as num).toDouble(),
-      lat2: (json['lat2'] as num).toDouble(),
-      lng2: (json['lng2'] as num).toDouble(),
+      lat1: lat1Value?.toDouble() ?? 0.0,
+      lng1: lng1Value?.toDouble() ?? 0.0,
+      lat2: lat2Value?.toDouble() ?? 0.0,
+      lng2: lng2Value?.toDouble() ?? 0.0,
     );
   }
 

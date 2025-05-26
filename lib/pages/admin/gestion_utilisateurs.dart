@@ -14,10 +14,38 @@ class _GestionUtilisateursPageState extends State<GestionUtilisateursPage> {
   List<Utilisateur> _filteredUsers = [];
   bool _isLoading = true;
 
+  // Fonction de callback pour le listener de l'authProvider
+  void _authProviderListener() {
+    if (mounted) {
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      setState(() {
+        _filterUsers(authProvider);
+      });
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     _loadUsers();
+
+    // Ajouter un listener pour mettre à jour les utilisateurs filtrés quand l'authProvider change
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      authProvider.addListener(_authProviderListener);
+    });
+  }
+
+  @override
+  void dispose() {
+    // Nettoyer les listeners pour éviter les fuites de mémoire
+    try {
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      authProvider.removeListener(_authProviderListener);
+    } catch (e) {
+      // Ignorer les erreurs si le provider n'est plus disponible
+    }
+    super.dispose();
   }
 
   Future<void> _loadUsers() async {
@@ -35,6 +63,8 @@ class _GestionUtilisateursPageState extends State<GestionUtilisateursPage> {
       setState(() {
         _users = users;
         _filterUsers(authProvider);
+        print('Utilisateurs récupérés: ${_users.length}');
+
         _isLoading = false;
       });
     } catch (e) {
@@ -68,102 +98,192 @@ class _GestionUtilisateursPageState extends State<GestionUtilisateursPage> {
   /// Affiche un popup dialogue pour créer ou modifier un utilisateur.
   /// Si [utilisateur] est null, il s'agit d'une création ; sinon, c'est une modification.
   void _createOrEditUtilisateur({Utilisateur? utilisateur}) {
-    showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (context) {
-        return UtilisateurDialog(
-          title: utilisateur == null
-              ? 'Créer un nouvel utilisateur'
-              : 'Modifier l\'utilisateur',
-          confirmButtonText: 'Valider',
-          initialUser: utilisateur,
-        );
-      },
-    ).then((result) async {
-      if (result != null) {
-        final username = result['username'] as String;
-        // On récupère la liste des rôles sous forme de List<String>
-        final roles = (result['roles'] as List<dynamic>).cast<String>();
-        // On récupère la liste des sites sous forme de titres.
-        final sitesNames = (result['sites'] as List<dynamic>).cast<String>();
-        final password = result['password'] as String?;
+    // S'assurer que les sites sont chargés avant d'afficher le dialogue
+    final siteProvider = Provider.of<SiteProvider>(context, listen: false);
+    print(
+        'GestionUtilisateursPage: Chargement des sites avant d\'afficher le dialogue');
+    siteProvider.loadAllSites().then((_) {
+      print(
+          'GestionUtilisateursPage: Sites chargés, nombre de sites: ${siteProvider.completeSites.length}');
 
-        Utilisateur updatedUser;
-        try {
-          if (utilisateur == null) {
-            // Création d'un nouvel utilisateur.
-            updatedUser = await UtilisateurApi.createUser(
-              username: username,
-              roles: roles,
-              password: password,
-            );
-            setState(() {
-              _users.add(updatedUser);
-            });
-          } else {
-            // Modification de l'utilisateur existant.
-            updatedUser = await UtilisateurApi.updateUser(
-              utilisateur.id,
-              username: username,
-              roles: roles,
-              password: password,
-            );
-            setState(() {
-              final index = _users.indexWhere((u) => u.id == utilisateur.id);
-              if (index != -1) {
-                _users[index] = updatedUser;
-              }
-            });
-          }
+      // Afficher le dialogue une fois les sites chargés
+      showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (context) {
+          return UtilisateurDialog(
+            title: utilisateur == null
+                ? 'Créer un nouvel utilisateur'
+                : 'Modifier l\'utilisateur',
+            confirmButtonText: 'Valider',
+            initialUser: utilisateur,
+          );
+        },
+      ).then((result) async {
+        if (result != null) {
+          final username = result['username'] as String;
+          // On récupère la liste des rôles globaux sous forme de List<String> (vide dans la nouvelle UI)
+          final globalRoles =
+              (result['globalRoles'] as List<dynamic>).cast<String>();
+          // On récupère la map des rôles par site sous forme de Map<int, List<int>>
+          final siteRoles = (result['siteRoles'] as Map<dynamic, dynamic>).map(
+              (key, value) => MapEntry(int.parse(key.toString()),
+                  (value as List<dynamic>).cast<int>()));
+          final password = result['password'] as String?;
 
-          Site? findSiteByTitle(List<Site> sites, String title) {
-            for (var site in sites) {
-              if (site.name.toLowerCase() == title.toLowerCase()) {
-                return site;
-              }
-            }
-            return null;
-          }
-
-          // Mise à jour de l'association des sites à l'utilisateur.
-          final siteProvider =
-              Provider.of<SiteProvider>(context, listen: false);
-          for (final siteName in sitesNames) {
+          Utilisateur updatedUser;
+          try {
+            // Utiliser un bloc try-catch global pour gérer les erreurs de transaction
             try {
-              final matchingSite =
-                  findSiteByTitle(siteProvider.completeSites, siteName);
-              if (matchingSite != null) {
-                await UtilisateurApi.associateSiteToUser(
-                  userId: updatedUser.id,
-                  siteId: matchingSite.id,
+              if (utilisateur == null) {
+                // Création d'un nouvel utilisateur avec relations site-rôle
+                // Convertir la map siteRoles (Map<int, List<int>>) en map rolesBySite (Map<int, int>)
+                // Pour chaque site, on prend le premier rôle assigné (si plusieurs rôles sont assignés)
+                final Map<int, int> rolesBySite = {};
+                for (final entry in siteRoles.entries) {
+                  final siteId = entry.key;
+                  final roleIds = entry.value;
+                  if (roleIds.isNotEmpty) {
+                    rolesBySite[siteId] = roleIds.first;
+                  }
+                }
+
+                if (password == null || password.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                        content: Text(
+                            'Le mot de passe est requis pour créer un utilisateur')),
+                  );
+                  return;
+                }
+
+                // Utiliser la nouvelle API pour créer un utilisateur avec relations site-rôle
+                updatedUser = await UtilisateurApi.createUserWithRelations(
+                  username: username,
+                  password: password,
+                  rolesBySite: rolesBySite,
+                  globalRoles: globalRoles,
                 );
               } else {
-                // Site non trouvé
+                // Convertir la map siteRoles (Map<int, List<int>>) en map rolesBySite (Map<int, int>)
+                // Pour chaque site, on prend le premier rôle assigné (si plusieurs rôles sont assignés)
+                final Map<int, int> rolesBySite = {};
+                for (final entry in siteRoles.entries) {
+                  final siteId = entry.key;
+                  final roleIds = entry.value;
+                  if (roleIds.isNotEmpty) {
+                    rolesBySite[siteId] = roleIds.first;
+                  }
+                }
+
+                // Utiliser la nouvelle API pour mettre à jour un utilisateur avec relations site-rôle
+                updatedUser = await UtilisateurApi.updateUserWithRelations(
+                  userId: utilisateur.id,
+                  username: username,
+                  password: password,
+                  rolesBySite: rolesBySite,
+                  globalRoles: globalRoles,
+                  replaceExistingRelations:
+                      true, // Remplacer toutes les relations existantes
+                );
               }
             } catch (e) {
-              // Erreur lors de l'association du site
+              // En cas d'erreur lors de la création/modification de l'utilisateur
+              print(
+                  'Erreur lors de la création/modification de l\'utilisateur: $e');
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Erreur: $e')),
+              );
+              return; // Sortir de la méthode pour éviter de continuer avec un utilisateur non créé
             }
+
+            // Récupérer tous les rôles pour avoir la correspondance ID-nom
+            Map<int, String> roleIdToName = {};
+            try {
+              final allRoles = await UtilisateurApi.getAllRoles();
+              print('Rôles disponibles récupérés: ${allRoles.length}');
+
+              roleIdToName = {for (var role in allRoles) role.id: role.name};
+            } catch (e) {
+              print('Erreur lors de la récupération des rôles: $e');
+              // Ce n'est pas une erreur critique, on continue
+            }
+
+            // Aucune assignation de rôle supplémentaire n'est nécessaire car updateUserWithRelations
+            // gère déjà l'assignation des rôles aux sites
+            print(
+                'Utilisateur mis à jour avec relations site-rôle, pas besoin d\'assigner les rôles séparément');
+
+            // Rafraîchir l'utilisateur pour obtenir la liste mise à jour
+            try {
+              final refreshedUser =
+                  await UtilisateurApi.getUserById(updatedUser.id);
+
+              // Mettre à jour l'état de l'interface utilisateur
+              setState(() {
+                if (utilisateur == null) {
+                  // Nouvel utilisateur
+                  _users.add(refreshedUser);
+                } else {
+                  // Utilisateur existant
+                  final index =
+                      _users.indexWhere((u) => u.id == updatedUser.id);
+                  if (index != -1) {
+                    _users[index] = refreshedUser;
+                  }
+                }
+
+                // Mettre à jour la liste filtrée
+                final authProvider =
+                    Provider.of<AuthProvider>(context, listen: false);
+                _filterUsers(authProvider);
+              });
+
+              // Afficher un message de succès
+              String message =
+                  'Utilisateur ${utilisateur == null ? 'créé' : 'modifié'} avec succès';
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(message)),
+              );
+            } catch (e) {
+              print(
+                  'Erreur lors de la récupération de l\'utilisateur mis à jour: $e');
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                    content: Text(
+                        'L\'utilisateur a été ${utilisateur == null ? 'créé' : 'modifié'}, mais une erreur est survenue lors de la récupération des données mises à jour.')),
+              );
+
+              // Recharger tous les utilisateurs pour s'assurer que la liste est à jour
+              _loadUsers();
+            }
+          } catch (e) {
+            // Erreur lors de la création/modification de l'utilisateur
+            print(
+                'Erreur lors de la création/modification de l\'utilisateur: $e');
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Erreur: $e')),
+            );
           }
-
-          // Après avoir associé les sites, rafraîchir l'utilisateur pour obtenir la liste mise à jour.
-          final refreshedUser =
-              await UtilisateurApi.getUserById(updatedUser.id);
-          setState(() {
-            final index = _users.indexWhere((u) => u.id == updatedUser.id);
-            if (index != -1) {
-              _users[index] = refreshedUser;
-            }
-
-            // Mettre à jour la liste filtrée
-            final authProvider =
-                Provider.of<AuthProvider>(context, listen: false);
-            _filterUsers(authProvider);
-          });
-        } catch (e) {
-          // Erreur lors de la création/modification de l'utilisateur
         }
-      }
+      });
     });
+  }
+
+  /// Retourne une couleur en fonction du rôle.
+  Color _getRoleColor(String role) {
+    switch (role.toLowerCase()) {
+      case 'admin':
+        return Colors.red;
+      case 'super-admin':
+        return Colors.deepPurple;
+      case 'technicien':
+        return Colors.blue;
+      case 'user':
+        return Colors.green;
+      default:
+        return Colors.orange;
+    }
   }
 
   /// Affiche un popup de confirmation pour supprimer un utilisateur.
@@ -206,8 +326,8 @@ class _GestionUtilisateursPageState extends State<GestionUtilisateursPage> {
     // Récupérer l'authProvider pour accéder aux informations de l'utilisateur connecté
     final authProvider = Provider.of<AuthProvider>(context, listen: true);
 
-    // Mettre à jour la liste filtrée si l'utilisateur connecté change
-    _filterUsers(authProvider);
+    // Nous n'appelons plus _filterUsers ici pour éviter le double filtrage
+    // Le filtrage est déjà fait dans _loadUsers et sera refait si l'utilisateur change
 
     Widget content;
 
@@ -253,7 +373,50 @@ class _GestionUtilisateursPageState extends State<GestionUtilisateursPage> {
                       return DataRow(
                         cells: [
                           DataCell(Text(user.login)),
-                          DataCell(Text(user.globalRoles.join(', '))),
+                          DataCell(
+                            user.globalRoles.isEmpty
+                                ? const Text(
+                                    'Aucun rôle',
+                                    style: TextStyle(
+                                      fontStyle: FontStyle.italic,
+                                      color: Colors.grey,
+                                    ),
+                                  )
+                                : Wrap(
+                                    spacing: 4.0,
+                                    runSpacing: 4.0,
+                                    children: user.globalRoles.map((role) {
+                                      return Container(
+                                        margin: const EdgeInsets.only(
+                                            right: 4, bottom: 4),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 4,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: _getRoleColor(role),
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color:
+                                                  Colors.black.withOpacity(0.1),
+                                              blurRadius: 2,
+                                              offset: const Offset(0, 1),
+                                            ),
+                                          ],
+                                        ),
+                                        child: Text(
+                                          role,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      );
+                                    }).toList(),
+                                  ),
+                          ),
                           DataCell(Text(
                               user.sites.map((site) => site.name).join(', '))),
                           DataCell(
@@ -288,10 +451,13 @@ class _GestionUtilisateursPageState extends State<GestionUtilisateursPage> {
 
     return Scaffold(
       body: GradiantBackground.getSafeAreaGradiant(context, content),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _createOrEditUtilisateur(),
-        tooltip: 'Ajouter un utilisateur',
-        child: const Icon(Icons.add),
+      floatingActionButton: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+        child: FloatingActionButton(
+          onPressed: () => _createOrEditUtilisateur(),
+          tooltip: 'Ajouter un utilisateur',
+          child: const Icon(Icons.add),
+        ),
       ),
     );
   }

@@ -29,9 +29,15 @@ class Carte {
       chemin: json['chemin'] ?? '',  // Use empty string if chemin is null
       etageId: json['etage_id'] as int?,
       siteId: json['site_id'] as int?,
-      centerLat: json['center_lat'] != null ? (json['center_lat'] as num).toDouble() : 0.0,
-      centerLng: json['center_lng'] != null ? (json['center_lng'] as num).toDouble() : 0.0,
-      zoom: json['zoom'] != null ? (json['zoom'] as num).toDouble() : 0.0,
+      centerLat: json['center_lat'] != null && json['center_lat'] is num 
+          ? (json['center_lat'] as num).toDouble() 
+          : 0.0,
+      centerLng: json['center_lng'] != null && json['center_lng'] is num 
+          ? (json['center_lng'] as num).toDouble() 
+          : 0.0,
+      zoom: json['zoom'] != null && json['zoom'] is num 
+          ? (json['zoom'] as num).toDouble() 
+          : 0.0,
     );
 
     // Check if a carte with the same ID already exists in the list

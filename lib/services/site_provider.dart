@@ -3,6 +3,11 @@ part of '../main.dart';
 class SiteProvider with ChangeNotifier {
   static String baseUrl = Config.baseUrl;
 
+  // Cache pour éviter les appels API redondants
+  static final Map<int, DateTime> _lastRefreshTime = {};
+  static const Duration _cacheValidityDuration =
+      Duration(minutes: 5); // Durée de validité du cache
+
   List<SiteAssociation> _sites = [];
   SiteAssociation? _selectedSite;
 
@@ -12,6 +17,23 @@ class SiteProvider with ChangeNotifier {
 
   // La liste complète des sites (récupérée d'une API, mise à jour ultérieurement, etc.)
   List<Site> completeSites = [];
+
+  // Constructeur qui initialise la liste completeSites et charge les sites depuis l'API
+  SiteProvider() {
+    // Initialiser completeSites avec les sites déjà chargés
+    updateCompleteSites();
+
+    // Charger tous les sites depuis l'API
+    loadAllSites().then((_) {
+      print('SiteProvider: Sites chargés depuis l\'API dans le constructeur');
+    });
+  }
+
+  /// Met à jour la liste completeSites avec les sites de Site.allSites
+  void updateCompleteSites() {
+    completeSites = List.from(Site.allSites);
+    notifyListeners();
+  }
 
   /// Retourne le site complet ayant l'ID correspondant.
   /// Si aucun site n'est trouvé, retourne null.
@@ -26,25 +48,45 @@ class SiteProvider with ChangeNotifier {
     }
   }
 
-  /// Rafraîchit les données d'un site depuis l'API.
+  /// Rafraîchit les données d'un site depuis l'API, avec mise en cache.
   /// Retourne le site mis à jour ou null en cas d'erreur.
   Future<Site?> refreshSiteData(int siteId) async {
     try {
-      // Récupère le site complet depuis l'API
+      // Vérifier si le site est déjà dans le cache et si le cache est encore valide
+      final now = DateTime.now();
+      final lastRefresh = _lastRefreshTime[siteId];
+
+      // Si le site est dans le cache et que le cache est encore valide, utiliser le site du cache
+      if (lastRefresh != null &&
+          now.difference(lastRefresh) < _cacheValidityDuration) {
+        // Récupérer le site depuis la liste statique (qui fait office de cache)
+        final cachedSite = getCompleteSiteById(siteId);
+        if (cachedSite != null) {
+          print('Utilisation du site en cache pour l\'ID $siteId');
+          return cachedSite;
+        }
+      }
+
+      // Si le site n'est pas dans le cache ou si le cache n'est plus valide, faire un appel API
+      print('Récupération du site depuis l\'API pour l\'ID $siteId');
       final site = await SiteApi.getCompleteSiteById(siteId);
 
       if (site != null) {
         // Le site est automatiquement mis à jour dans la liste Site.allSites
         // grâce à la méthode updateOrAddSite appelée dans Site.fromJson
 
-        // Notifie les écouteurs que les données ont changé
-        notifyListeners();
+        // Mettre à jour le cache
+        _lastRefreshTime[siteId] = now;
+
+        // Mettre à jour la liste completeSites
+        updateCompleteSites();
 
         return site;
       } else {
         return null;
       }
     } catch (e) {
+      print('Erreur lors du rafraîchissement des données du site $siteId: $e');
       return null;
     }
   }
@@ -56,7 +98,20 @@ class SiteProvider with ChangeNotifier {
   }
 
   /// Charge les sites depuis l'API et met à jour la liste.
-  Future<void> loadSites() async {
+  /// Si un contexte est fourni, charge uniquement les sites associés à l'utilisateur courant.
+  Future<void> loadSites([BuildContext? context]) async {
+    // Si un contexte est fourni, utiliser les sites de l'utilisateur courant
+    if (context != null) {
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      if (authProvider.currentUser != null) {
+        // Utiliser directement les sites associés à l'utilisateur
+        _sites = authProvider.currentUser!.sites;
+        notifyListeners();
+        return;
+      }
+    }
+
+    // Sinon, charger tous les sites depuis l'API (comportement par défaut)
     final url = Uri.parse('$baseUrl/sites/');
 
     // Log the API call
@@ -80,7 +135,9 @@ class SiteProvider with ChangeNotifier {
               "Format de données invalide : une liste était attendue.");
         }
       }
-      notifyListeners();
+
+      // Mettre à jour la liste completeSites
+      updateCompleteSites();
     } else {
       throw Exception(
           "Erreur lors de la récupération des sites. Code: ${response.statusCode}");
@@ -98,11 +155,71 @@ class SiteProvider with ChangeNotifier {
 
       // Ajouter à la liste et notifier les écouteurs
       _sites.add(newSite);
-      notifyListeners();
+
+      // Mettre à jour la liste completeSites
+      updateCompleteSites();
 
       return newSite;
     } catch (e) {
       throw Exception('Erreur lors de la création du site: ${e.toString()}');
+    }
+  }
+
+  /// Charge tous les sites complets depuis l'API et met à jour la liste completeSites.
+  /// Cette méthode est utile pour s'assurer que tous les sites sont chargés avant d'ouvrir un dialogue.
+  Future<void> loadAllSites() async {
+    try {
+      print('Début du chargement de tous les sites');
+      final url = Uri.parse('$baseUrl/sites/');
+      print('Envoi de la requête GET à $url');
+      final response = await http.get(url);
+      print('Réponse reçue: Status ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        if (response.body.isEmpty || response.body == 'null') {
+          print('Aucun site disponible dans la réponse API');
+          return;
+        }
+
+        print('Corps de la réponse: ${response.body}');
+        final dynamic decoded = jsonDecode(response.body);
+        if (decoded is List) {
+          print('Nombre de sites trouvés: ${decoded.length}');
+
+          // Créer directement des objets Site à partir des données JSON
+          for (var siteData in decoded) {
+            if (siteData is Map<String, dynamic> && siteData['id'] != null) {
+              final siteId = siteData['id'] as int;
+              final siteName = siteData['name'] as String? ?? 'Site sans nom';
+              print('Création du site: ID=$siteId, Nom=$siteName');
+
+              // Créer un objet Site directement
+              final site = Site(
+                id: siteId,
+                name: siteName,
+                batiments: [],
+                carte: null,
+              );
+
+              // Ajouter le site à la liste globale
+              Site.updateOrAddSite(site);
+
+              // Récupérer les détails complets du site en arrière-plan
+              refreshSiteData(siteId);
+            }
+          }
+
+          // Mettre à jour la liste completeSites immédiatement
+          updateCompleteSites();
+          print('Liste completeSites mise à jour: ${completeSites.length} sites');
+        } else {
+          print('Format de données invalide: une liste était attendue');
+        }
+      } else {
+        print('Erreur lors de la récupération des sites. Code: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('Erreur lors du chargement de tous les sites: $e');
     }
   }
 }

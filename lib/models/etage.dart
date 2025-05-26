@@ -19,9 +19,22 @@ class Etage {
   });
 
   factory Etage.fromJson(Map<String, dynamic> json) {
-    var baesList = <Baes>[];
+    // Get the etage ID
+    final etageId = json['id'] ?? 0;
+
+    // Process BAES list
+    List<Baes> baesList = <Baes>[];
     if (json['baes'] != null) {
-      baesList = (json['baes'] as List).map((e) => Baes.fromJson(e)).toList();
+      // Add etageId to each BAES JSON object if it's not already present
+      final List<dynamic> baesJsonList = json['baes'] as List;
+      for (var baesJson in baesJsonList) {
+        if (baesJson is Map<String, dynamic> && baesJson['etage_id'] == null) {
+          baesJson['etage_id'] = etageId;
+        }
+      }
+
+      // Create Baes objects from the JSON
+      baesList = baesJsonList.map((e) => Baes.fromJson(e)).toList();
     }
 
     // Create the Etage instance

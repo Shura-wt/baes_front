@@ -19,6 +19,9 @@ class _GestionCartePageState extends State<GestionCartePage>
   // Reference to the SiteProvider
   late SiteProvider _siteProvider;
 
+  // Variable to track the previous site ID
+  int? _previousSiteId;
+
   // Variables pour la vue étage (image d'étage et markers)
   Uint8List? _uploadedFloorImage;
   double? _floorEffectiveWidth;
@@ -50,6 +53,10 @@ class _GestionCartePageState extends State<GestionCartePage>
   bool _isAddingBaes = false;
   List<Marker> _baesMarkers = [];
 
+  // Variables pour le déplacement de BAES
+  Baes? _selectedBaes;
+  int? _selectedBaesIndex;
+
   // Méthode pour créer un BAES via l'API
   Future<Baes?> _createBaesViaApi(
       String name, Map<String, dynamic> position, int etageId) async {
@@ -72,6 +79,21 @@ class _GestionCartePageState extends State<GestionCartePage>
       return;
     }
 
+    // Vérifier si la carte de l'étage est sauvegardée
+    bool carteExiste = false;
+    for (var carte in Carte.allCartes) {
+      if (carte.etageId == _selectedFloorId) {
+        carteExiste = true;
+        break;
+      }
+    }
+
+    // Si la carte n'existe pas, la sauvegarder automatiquement
+    if (!carteExiste && _uploadedFloorImage != null) {
+      // Sauvegarder la carte automatiquement
+      await _saveFloorMap();
+    }
+
     // Préparer les données de position pour l'API
     final Map<String, dynamic> position = {
       'lat': point.latitude,
@@ -82,30 +104,22 @@ class _GestionCartePageState extends State<GestionCartePage>
     final baes = await _createBaesViaApi(name, position, _selectedFloorId!);
 
     if (baes != null) {
-      // Si l'API a réussi, ajouter le marker à la carte
+      // Si l'API a réussi, mettre à jour les marqueurs pour inclure le nouveau BAES
       setState(() {
-        _baesMarkers.add(
-          Marker(
-            point: point,
-            width: 30,
-            height: 30,
-            child: Container(
-              decoration: const BoxDecoration(
-                color: Colors.green,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.lightbulb,
-                color: Colors.white,
-                size: 20,
-              ),
-            ),
-          ),
-        );
+        // Réinitialiser la sélection
+        _selectedBaes = null;
+        _selectedBaesIndex = null;
+
+        // Mettre à jour tous les marqueurs (y compris le nouveau)
+        _updateBaesMarkers();
       });
 
-      // Rafraîchir les données du site pour s'assurer que les bâtiments sont toujours visibles après un rechargement
-      _refreshSiteData();
+      // Recharger uniquement les BAES pour l'étage actuel au lieu de rafraîchir toutes les données du site
+      // Cela est plus efficace et évite les effets de bord
+      _loadBaesForFloor(_selectedFloorId!);
+
+      // Notifier les écouteurs pour mettre à jour le drawer
+      Provider.of<SiteProvider>(context, listen: false).notifyListeners();
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("BAES '$name' ajouté à la carte et enregistré")),
@@ -143,6 +157,8 @@ class _GestionCartePageState extends State<GestionCartePage>
 
     // Initialize and store reference to SiteProvider
     _siteProvider = Provider.of<SiteProvider>(context, listen: false);
+    // Initialize the previous site ID with the current site ID
+    _previousSiteId = _siteProvider.selectedSite?.id;
     // Add listener to SiteProvider to reset map data when site selection changes
     _siteProvider.addListener(_onSiteSelectionChanged);
 
@@ -158,16 +174,32 @@ class _GestionCartePageState extends State<GestionCartePage>
   void _onSiteSelectionChanged() {
     if (!mounted) return;
 
-    // Reset site map data to ensure no data persistence
-    setState(() {
-      _siteEffectiveWidth = null;
-      _siteEffectiveHeight = null;
-      _currentSiteCarte = null;
-    });
+    // Get the current and previous site IDs
+    final currentSiteId = _siteProvider.selectedSite?.id;
 
-    // Reload site map data for the newly selected site
-    if (mounted) {
-      _loadSiteMapData();
+    // Only reset the view if the site has actually changed
+    if (_previousSiteId != currentSiteId) {
+      _previousSiteId = currentSiteId;
+
+      // Reset site map data to ensure no data persistence
+      setState(() {
+        _siteEffectiveWidth = null;
+        _siteEffectiveHeight = null;
+        _currentSiteCarte = null;
+
+        // Réinitialiser également les données d'étage
+        _isFloorMode = false;
+        _selectedBatiment = null;
+        _selectedFloorId = null;
+        _batimentEtages = [];
+        _floorEffectiveWidth = null;
+        _floorEffectiveHeight = null;
+      });
+
+      // Reload site map data for the newly selected site
+      if (mounted) {
+        _loadSiteMapData();
+      }
     }
   }
 
@@ -211,6 +243,9 @@ class _GestionCartePageState extends State<GestionCartePage>
         }
       } else {
         // Aucune carte trouvée, on propose à l'utilisateur d'en charger une
+        // Vérifie si une carte est déjà affichée avant de montrer la popup
+        bool wasAlreadyNull = _currentSiteCarte == null;
+
         if (mounted) {
           setState(() {
             _currentSiteCarte = null;
@@ -218,33 +253,34 @@ class _GestionCartePageState extends State<GestionCartePage>
         }
 
         // Affiche une boîte de dialogue pour proposer de charger une carte
-        if (mounted) {
-          showDialog(
-            context: context,
-            builder: (BuildContext context) {
-              return AlertDialog(
-                title: const Text("Aucune carte disponible"),
-                content: const Text(
-                    "Aucune carte n'est disponible pour ce site. Voulez-vous en charger une?"),
-                actions: [
-                  TextButton(
-                    onPressed: () {
-                      Navigator.of(context).pop();
-                    },
-                    child: const Text("Annuler"),
-                  ),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.of(context).pop();
-                      _uploadSiteImage();
-                    },
-                    child: const Text("Charger une carte"),
-                  ),
-                ],
-              );
-            },
-          );
-        }
+        // seulement si aucune carte n'était déjà affichée
+        // if (mounted && !wasAlreadyNull) {
+        //   showDialog(
+        //     context: context,
+        //     builder: (BuildContext context) {
+        //       return AlertDialog(
+        //         title: const Text("Aucune carte disponible"),
+        //         content: const Text(
+        //             "Aucune carte n'est disponible pour ce site. Voulez-vous en charger une?"),
+        //         actions: [
+        //           TextButton(
+        //             onPressed: () {
+        //               Navigator.of(context).pop();
+        //             },
+        //             child: const Text("Annuler"),
+        //           ),
+        //           TextButton(
+        //             onPressed: () {
+        //               Navigator.of(context).pop();
+        //               _uploadSiteImage();
+        //             },
+        //             child: const Text("Charger une carte"),
+        //           ),
+        //         ],
+        //       );
+        //     },
+        //   );
+        // }
       }
     } catch (e) {
       // Afficher un message d'erreur à l'utilisateur
@@ -259,6 +295,89 @@ class _GestionCartePageState extends State<GestionCartePage>
   // Méthode pour basculer vers la vue d'étage
 
   // Méthode pour basculer vers la vue site
+
+  // Méthode pour mettre à jour la position d'un BAES
+
+  Future<void> _updateBaesPosition(Baes baes, LatLng newPosition) async {
+    // Affiche un indicateur de chargement
+    bool isDialogShowing = true;
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return const AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text("Mise à jour de la position du BAES..."),
+            ],
+          ),
+        );
+      },
+    );
+
+    try {
+      // Préparer les données de position pour l'API
+      final Map<String, dynamic> position = {
+        'lat': newPosition.latitude,
+        'lng': newPosition.longitude,
+      };
+
+      // Appeler l'API pour mettre à jour la position du BAES
+      final updatedBaes = await BaesApi.updateBaesPosition(baes.id, position);
+
+      // Ferme le dialogue de chargement
+      if (isDialogShowing && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        isDialogShowing = false;
+      }
+
+      if (!mounted) return;
+
+      if (updatedBaes != null) {
+        // Si l'API a réussi, mettre à jour les marqueurs
+        setState(() {
+          _selectedBaes = null;
+          _selectedBaesIndex = null;
+          _updateBaesMarkers();
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Position du BAES mise à jour avec succès"),
+          ),
+        );
+      } else {
+        // Si l'API a échoué, afficher un message d'erreur
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content:
+                Text("Erreur lors de la mise à jour de la position du BAES"),
+          ),
+        );
+      }
+    } catch (e) {
+      // Ferme le dialogue de chargement en cas d'erreur
+      if (isDialogShowing && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        isDialogShowing = false;
+      }
+
+      if (!mounted) return;
+
+      // Affiche un message d'erreur
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content:
+              Text("Erreur lors de la mise à jour de la position du BAES: $e"),
+        ),
+      );
+    }
+  }
 
   // Méthode pour gérer les clics sur la carte
   void _handleMapTap(TapPosition tapPosition, LatLng point) {
@@ -286,7 +405,13 @@ class _GestionCartePageState extends State<GestionCartePage>
 
     // Si on est en mode ajout de BAES et qu'on est en mode étage
     if (_isAddingBaes && _isFloorMode && _selectedFloorId != null) {
-      // Ajoute un marqueur BAES à l'emplacement cliqué
+      // Si un BAES est sélectionné, on le déplace à la nouvelle position
+      if (_selectedBaes != null) {
+        _updateBaesPosition(_selectedBaes!, point);
+        return;
+      }
+
+      // Sinon, on ajoute un nouveau BAES à l'emplacement cliqué
       _showBaesNameDialog(point);
       return;
     }
@@ -692,9 +817,239 @@ class _GestionCartePageState extends State<GestionCartePage>
     });
   }
 
+  // Méthode pour gérer le clic sur un marqueur BAES
+  void _handleBaesMarkerTap(Baes baes, int markerIndex) {
+    // Si le mode placement BAES est activé
+    if (_isAddingBaes && _isFloorMode && _selectedFloorId != null) {
+      setState(() {
+        // Si un BAES est déjà sélectionné, le désélectionner
+        if (_selectedBaes != null) {
+          // Si c'est le même BAES, le désélectionner
+          if (_selectedBaes!.id == baes.id) {
+            _selectedBaes = null;
+            _selectedBaesIndex = null;
+            return;
+          }
+        }
+
+        // Sélectionner le BAES cliqué
+        _selectedBaes = baes;
+        _selectedBaesIndex = markerIndex;
+
+        // Mettre à jour le marqueur pour le rendre orange (sélectionné)
+        _updateBaesMarkers();
+      });
+    } else if (_isFloorMode && _selectedFloorId != null && !_isAddingBaes) {
+      // Si on n'est pas en mode placement BAES, afficher les informations du BAES
+      // Trouver le nom de l'étage actuel
+      String floorName = "";
+      for (var floor in _batimentEtages) {
+        if (floor.id == _selectedFloorId) {
+          floorName = floor.name;
+          break;
+        }
+      }
+
+      // Vérifier s'il y a des erreurs de connexion actives (non résolues et non ignorées)
+      bool statusConnection = baes.erreurs.any((e) =>
+          (e.typeErreur == 'connection' ||
+              e.typeErreur == 'erreur_connexion') &&
+          !e.isSolved &&
+          !e.isIgnored);
+
+      // Vérifier s'il y a des erreurs de batterie actives (non résolues et non ignorées)
+      bool batteryError = baes.erreurs.any((e) =>
+          (e.typeErreur == 'battery' || e.typeErreur == 'erreur_batterie') &&
+          !e.isSolved &&
+          !e.isIgnored);
+
+      // Vérifier si des erreurs de connexion sont ignorées
+      bool conectionErrorIgnored = baes.erreurs.any((e) =>
+          (e.typeErreur == 'connection' ||
+              e.typeErreur == 'erreur_connexion') &&
+          e.isIgnored);
+
+      // Vérifier si des erreurs de batterie sont ignorées
+      bool batteryErrorIgnored = baes.erreurs.any((e) =>
+          (e.typeErreur == 'battery' || e.typeErreur == 'erreur_batterie') &&
+          e.isIgnored);
+
+      // Show a dialog with BAES information
+      showDialog(
+        context: context,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: const Text('Information du bloc'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Site: ${_siteProvider.selectedSite?.name ?? ""}'),
+                Text('Bâtiment: ${_selectedBatiment?.name ?? ""}'),
+                Text('Étage: $floorName'),
+                Text('ID du bloc: ${baes.id}'),
+                Row(
+                  children: [
+                    const Text(
+                      'Statut: ',
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                    Tooltip(
+                      message: "Connexion",
+                      child: Icon(
+                        Icons.wifi,
+                        color: statusConnection
+                            ? Colors.red
+                            : conectionErrorIgnored
+                                ? Colors.orange
+                                : Colors.green,
+                        size: 16,
+                      ),
+                    ),
+                    Text(statusConnection ? ' Déconnecté' : ' Connecté'),
+                    const SizedBox(width: 8),
+                    Tooltip(
+                      message: "Etat batterie",
+                      child: Icon(
+                        // Check for battery errors in both ways:
+                        // 1. Direct boolean field in BAES data
+                        // 2. Error type "battery" or "erreur_batterie" in erreurs list
+                        batteryError
+                            ? Icons.battery_unknown_outlined
+                            : Icons.battery_full,
+                        color: batteryError
+                            ? Colors.red
+                            : batteryErrorIgnored
+                                ? Colors.orange
+                                : Colors.green,
+                        size: 16,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Fermer'),
+              ),
+            ],
+          );
+        },
+      );
+    }
+  }
+
+  // Méthode pour mettre à jour les marqueurs BAES (pour refléter la sélection et l'état des erreurs)
+  void _updateBaesMarkers() {
+    // Récupère tous les BAES de l'étage actuel
+    final baesList =
+        Baes.allBaes.where((b) => b.etageId == _selectedFloorId).toList();
+
+    // Vide la liste des marqueurs
+    _baesMarkers.clear();
+
+    // Recrée tous les marqueurs
+    for (int i = 0; i < baesList.length; i++) {
+      final baes = baesList[i];
+
+      // Vérifier que la position est valide
+      if (baes.position.containsKey('lat') &&
+          baes.position.containsKey('lng')) {
+        final lat = baes.position['lat'];
+        final lng = baes.position['lng'];
+
+        if (lat != null && lng != null) {
+          // Détermine si ce BAES est sélectionné
+          final isSelected =
+              _selectedBaes != null && _selectedBaes!.id == baes.id;
+
+          // Vérifier s'il y a des erreurs de connexion actives (non résolues et non ignorées)
+          bool hasConnectionError = baes.erreurs.any((e) =>
+              (e.typeErreur == 'connection' ||
+                  e.typeErreur == 'erreur_connexion') &&
+              !e.isSolved &&
+              !e.isIgnored);
+
+          // Vérifier s'il y a des erreurs de batterie actives (non résolues et non ignorées)
+          bool hasBatteryError = baes.erreurs.any((e) =>
+              (e.typeErreur == 'battery' ||
+                  e.typeErreur == 'erreur_batterie') &&
+              !e.isSolved &&
+              !e.isIgnored);
+
+          // Vérifier si des erreurs sont ignorées (et aucune active)
+          bool anyErrorIgnored = false;
+          bool allErrorsSolved = true;
+
+          if (baes.erreurs.isNotEmpty) {
+            // Vérifier si toutes les erreurs sont soit résolues soit ignorées
+            bool allErrorsHandled =
+                baes.erreurs.every((e) => e.isSolved || e.isIgnored);
+
+            // Si toutes les erreurs sont traitées, vérifier si certaines sont ignorées
+            if (allErrorsHandled) {
+              anyErrorIgnored = baes.erreurs.any((e) => e.isIgnored);
+              allErrorsSolved = baes.erreurs.every((e) => e.isSolved);
+            } else {
+              // Si toutes les erreurs ne sont pas traitées, alors toutes ne sont pas résolues
+              allErrorsSolved = false;
+            }
+          }
+
+          // Déterminer la couleur du marqueur en fonction de l'état des erreurs
+          Color markerColor;
+          if (isSelected) {
+            // Si le BAES est sélectionné, il est toujours orange
+            markerColor = Colors.orange;
+          } else if (hasConnectionError || hasBatteryError) {
+            // Si le BAES a des erreurs actives, il est rouge
+            markerColor = Colors.red;
+          } else if (anyErrorIgnored) {
+            // Si le BAES a des erreurs ignorées (mais pas d'erreurs actives), il est orange
+            markerColor = Colors.orange;
+          } else {
+            // Sinon (pas d'erreurs ou toutes résolues), il est vert
+            markerColor = Colors.green;
+          }
+
+          _baesMarkers.add(
+            Marker(
+              point: LatLng(lat, lng),
+              width: 30,
+              height: 30,
+              child: GestureDetector(
+                onTap: () => _handleBaesMarkerTap(baes, i),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: markerColor,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.lightbulb,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
+      }
+    }
+  }
+
   // Méthode pour charger les BAES d'un étage
   Future<void> _loadBaesForFloor(int etageId) async {
     try {
+      // Réinitialiser la sélection
+      _selectedBaes = null;
+      _selectedBaesIndex = null;
+
       // Récupère les BAES de l'étage
       final baes = await BaesApi.getBaesByIdFloor(etageId);
 
@@ -702,60 +1057,34 @@ class _GestionCartePageState extends State<GestionCartePage>
         return;
       }
 
-      // Créer une liste temporaire pour stocker les nouveaux marqueurs
-      List<Marker> newMarkers = [];
+      // Récupérer les erreurs pour chaque BAES
+      for (var baes in Baes.allBaes.where((b) => b.etageId == etageId)) {
+        // Récupérer les erreurs pour ce BAES
+        final erreurs = await ErreurApi.getErrorsForBaes(baes.id);
 
-      if (baes.isNotEmpty) {
-        // Créer des marqueurs pour les BAES récupérés
-        for (var baes in baes) {
-          // Vérifier que la position est valide
-          if (baes.position.containsKey('lat') &&
-              baes.position.containsKey('lng')) {
-            final lat = baes.position['lat'];
-            final lng = baes.position['lng'];
+        if (erreurs.isNotEmpty) {
+          // Mettre à jour le BAES avec ses erreurs
+          final index = Baes.allBaes.indexWhere((b) => b.id == baes.id);
+          if (index >= 0) {
+            // Créer un nouveau BAES avec les erreurs mises à jour
+            final updatedBaes = Baes(
+              id: baes.id,
+              name: baes.name,
+              position: baes.position,
+              etageId: baes.etageId,
+              erreurs: erreurs,
+            );
 
-            if (lat != null && lng != null) {
-              newMarkers.add(
-                Marker(
-                  point: LatLng(lat, lng),
-                  width: 30,
-                  height: 30,
-                  child: Container(
-                    decoration: const BoxDecoration(
-                      color: Colors.green,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.lightbulb,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                  ),
-                ),
-              );
-            }
+            // Remplacer l'ancien BAES par le nouveau
+            Baes.allBaes[index] = updatedBaes;
           }
         }
-
-        // Mettre à jour la liste des marqueurs en conservant les marqueurs existants
-        setState(() {
-          // Ajouter uniquement les nouveaux marqueurs qui ne sont pas déjà présents
-          for (var newMarker in newMarkers) {
-            bool markerExists = false;
-            for (var existingMarker in _baesMarkers) {
-              if (existingMarker.point.latitude == newMarker.point.latitude &&
-                  existingMarker.point.longitude == newMarker.point.longitude) {
-                markerExists = true;
-                break;
-              }
-            }
-
-            if (!markerExists) {
-              _baesMarkers.add(newMarker);
-            }
-          }
-        });
       }
+
+      // Mettre à jour les marqueurs
+      setState(() {
+        _updateBaesMarkers();
+      });
     } catch (e) {
       if (!mounted) {
         return;
@@ -1033,7 +1362,17 @@ class _GestionCartePageState extends State<GestionCartePage>
 
         return points.map((point) {
           if (point is List && point.length >= 2) {
-            return LatLng(point[0].toDouble(), point[1].toDouble());
+            // Add null checks for point elements
+            var lat = point[0];
+            var lng = point[1];
+
+            // Convert to double safely, using 0.0 as default if null or not convertible
+            double latDouble =
+                (lat != null) ? (lat is num ? lat.toDouble() : 0.0) : 0.0;
+            double lngDouble =
+                (lng != null) ? (lng is num ? lng.toDouble() : 0.0) : 0.0;
+
+            return LatLng(latDouble, lngDouble);
           }
           return const LatLng(0, 0);
         }).toList();
@@ -1088,6 +1427,12 @@ class _GestionCartePageState extends State<GestionCartePage>
     }
 
     _selectedFloorId = floorId;
+
+    // Réinitialiser les dimensions de la carte
+    setState(() {
+      _floorEffectiveWidth = null;
+      _floorEffectiveHeight = null;
+    });
 
     // Load floor map data
     try {
@@ -1664,6 +2009,14 @@ class _GestionCartePageState extends State<GestionCartePage>
         },
       );
 
+      // Définir un timeout pour fermer automatiquement la popup après un certain temps
+      Future.delayed(const Duration(seconds: 30), () {
+        if (isDialogShowing && mounted && Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+          isDialogShowing = false;
+        }
+      });
+
       try {
         // Créer un completer pour attendre la fin du décodage de l'image
         Completer<Map<String, dynamic>> imageDataCompleter = Completer();
@@ -1976,20 +2329,26 @@ class _GestionCartePageState extends State<GestionCartePage>
 
     // Si aucune carte n'est trouvée, propose d'en charger une
     if (siteCarte == null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              "Aucune carte disponible pour le site : ${selectedSite.name}",
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _uploadSiteImage,
-              child: const Text("Charger une carte"),
-            ),
-          ],
+      return GradiantBackground.getSafeAreaGradiant(
+        context,
+        Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                "Aucune carte disponible pour le site : ${selectedSite.name}",
+                style: const TextStyle(
+                  fontSize: 18,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: _uploadSiteImage,
+                child: const Text("Charger une carte"),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -2656,8 +3015,8 @@ class _GestionCartePageState extends State<GestionCartePage>
                       _isAddingBaes = !_isAddingBaes;
                       print("Nouvel état de _isAddingBaes: $_isAddingBaes");
                     });
-                    print("Mode ajout de BAES " +
-                        (_isAddingBaes ? "activé" : "désactivé"));
+                    print(
+                        "Mode ajout de BAES ${_isAddingBaes ? "activé" : "désactivé"}");
                   },
                   tooltip: _isAddingBaes
                       ? "Désactiver le mode ajout de BAES"
@@ -2666,16 +3025,17 @@ class _GestionCartePageState extends State<GestionCartePage>
                   child: Icon(
                       _isAddingBaes ? Icons.close : Icons.add_location_alt),
                 ),
+                const SizedBox(height: 10),
 
                 if (_selectedFloorId != null && _selectedFloorId! > 0)
-                  const SizedBox(height: 10),
-                // FAB : Charger une carte d'étage (toujours visible en mode étage)
-                FloatingActionButton(
-                  heroTag: 'uploadFloorImage',
-                  onPressed: _uploadFloorImage,
-                  tooltip: "Charger une carte d'étage",
-                  child: const Icon(Icons.upload_file),
-                ),
+
+                  // FAB : Charger une carte d'étage (toujours visible en mode étage)
+                  FloatingActionButton(
+                    heroTag: 'uploadFloorImage',
+                    onPressed: _uploadFloorImage,
+                    tooltip: "Charger une carte d'étage",
+                    child: const Icon(Icons.upload_file),
+                  ),
               ],
             )
           : Column(
@@ -2715,9 +3075,8 @@ class _GestionCartePageState extends State<GestionCartePage>
                       ? "Annuler la création"
                       : "Créer un bâtiment",
                   backgroundColor: _isCreatingBuilding ? Colors.red : null,
-                  child: Icon(_isCreatingBuilding
-                      ? Icons.close
-                      : Icons.add_location_alt),
+                  child:
+                      Icon(_isCreatingBuilding ? Icons.close : Icons.apartment),
                 ),
               ],
             ),
@@ -2886,6 +3245,18 @@ class _GestionCartePageState extends State<GestionCartePage>
 
           // Recharge les données de l'étage avec l'ID de l'étage créé
           _loadFloorMapData(createdFloor.id);
+        } else {
+          // Ferme le dialogue de chargement si la carte n'a pas pu être créée
+          if (isDialogShowing && mounted) {
+            Navigator.of(context).pop();
+            isDialogShowing = false;
+          }
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text("Erreur lors de la création de la carte")),
+          );
+          return;
         }
       }
       // Mode 2: Mise à jour d'un étage existant

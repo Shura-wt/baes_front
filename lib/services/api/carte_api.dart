@@ -338,4 +338,39 @@ class APICarte {
       return null;
     }
   }
+
+  //get carte by id floor  withGET /get_by_floor/<int:floor_id>
+  // ```
+  //
+  // Cette route est définie dans le fichier `site_carte_routes.py` et fonctionne comme suit:
+  //
+  // 1. Elle accepte une requête HTTP GET
+  // 2. Elle prend l'ID de l'étage comme paramètre dans l'URL
+  // 3. Elle vérifie d'abord si l'étage existe
+  // 4. Puis elle recherche la carte associée à cet étage
+  // 5. Si trouvée, elle renvoie les détails de la carte au format JSON:
+  //    - id
+  //    - chemin (URL d'accès à l'image)
+  //    - center_lat (latitude du centre)
+  //    - center_lng (longitude du centre)
+  //    - zoom
+  //    - etage_id (ID de l'étage)
+  //    - site_id (ID du site, peut être null)
+
+  static Future<Carte?> getCarteByFloor(int floorId) async {
+    final uri = Uri.parse('$baseUrl/get_by_floor/$floorId');
+    try {
+      final response = await http.get(uri);
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> json = jsonDecode(response.body);
+        return Carte.fromJson(json);
+      } else {
+        // Vous pouvez logger response.body pour diagnostiquer
+        return null;
+      }
+    } catch (e) {
+      // Gérer l'erreur de réseau
+      return null;
+    }
+  }
 }

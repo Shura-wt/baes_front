@@ -13,6 +13,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http_parser/http_parser.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -54,6 +55,8 @@ part 'pages/home.dart';
 
 part 'pages/view_carte_page.dart';
 
+part 'pages/view.dart';
+
 part 'pages/admin/gestion_carte.dart';
 
 part 'pages/admin/gestion_utilisateurs.dart';
@@ -90,6 +93,8 @@ part 'services/api/BAES_api.dart';
 
 part 'services/api/API_batiment.dart';
 
+part 'services/api/erreur_api.dart';
+
 part 'services/general.dart';
 
 void main() {
@@ -97,7 +102,7 @@ void main() {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()),
-        ChangeNotifierProvider(create: (_) => SiteProvider()..loadSites()),
+        ChangeNotifierProvider(create: (_) => SiteProvider()),
       ],
       child: const MyApp(),
     ),
@@ -115,6 +120,9 @@ class MyApp extends StatelessWidget {
         '/login': (context) => const LoginPage(),
         // Page home (protégée, mais accessible par tout rôle)
         '/home': (context) => const AuthGuard(child: HomePage()),
+        '/view': (context) => const AuthGuard(
+              child: VisualisationCartePage(),
+            ),
 
         // Pages admin (nécessitent requiresAdmin = true)
         '/admin/carte': (context) => const AuthGuard(
