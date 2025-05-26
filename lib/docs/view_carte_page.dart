@@ -56,6 +56,7 @@ class _ViewCartePageState extends State<ViewCartePage> {
   @override
   void initState() {
     super.initState();
+
     // Set the static reference to this instance
     _instance = this;
 

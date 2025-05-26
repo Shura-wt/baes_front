@@ -53,8 +53,6 @@ part 'services/site_provider.dart';
 // Pages
 part 'pages/home.dart';
 
-part 'pages/view_carte_page.dart';
-
 part 'pages/view.dart';
 
 part 'pages/admin/gestion_carte.dart';
@@ -96,6 +94,8 @@ part 'services/api/API_batiment.dart';
 part 'services/api/erreur_api.dart';
 
 part 'services/general.dart';
+
+part '../docs/view_carte_page.dart';
 
 void main() {
   runApp(

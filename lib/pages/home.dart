@@ -103,13 +103,8 @@ class _HomePageState extends State<HomePage> {
     Widget bodyContent;
     switch (_currentPage) {
       case 'home':
-        bodyContent = const ViewCartePage();
-        break;
-
-      case 'view':
         bodyContent = const VisualisationCartePage();
         break;
-
       case 'carte':
         bodyContent = const GestionCartePage();
         break;
@@ -117,7 +112,7 @@ class _HomePageState extends State<HomePage> {
         bodyContent = const GestionUtilisateursPage();
         break;
       default:
-        bodyContent = const ViewCartePage();
+        bodyContent = const VisualisationCartePage();
     }
 
     return Scaffold(
@@ -140,13 +135,6 @@ class _HomePageState extends State<HomePage> {
                 page: 'carte',
                 text: "Gestion carte",
                 route: '/admin/carte',
-                textStyle: const TextStyle(fontSize: 30),
-              ),
-              _buildNavButton(
-                context: context,
-                page: 'view',
-                text: "Visualisation carte",
-                route: '/view',
                 textStyle: const TextStyle(fontSize: 30),
               ),
               _buildNavButton(

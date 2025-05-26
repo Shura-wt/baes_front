@@ -292,7 +292,6 @@ class _LeftDrawerState extends State<LeftDrawer> {
       }
 
       // Refresh the map view if it's open
-      _ViewCartePageState.refreshMapView();
     } catch (e) {
       if (kDebugMode) {
         print("Error in _updateBaesStatus: $e");
@@ -1239,7 +1238,6 @@ class ErrorBAESTile extends StatelessWidget {
       }
 
       // Refresh the map view if it's open
-      _ViewCartePageState.refreshMapView();
 
       // Fetch all errors to ensure UI is updated
       ErreurApi.getAllErrors().then((errors) {
@@ -1279,7 +1277,6 @@ class ErrorBAESTile extends StatelessWidget {
           }
 
           // Refresh the map view again with the latest data
-          _ViewCartePageState.refreshMapView();
         }
       });
     } else {
