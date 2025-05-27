@@ -13,6 +13,13 @@ class _VisualisationCartePageState extends State<VisualisationCartePage> {
   bool _isUpdatingErrors = false;
   bool _isUpdatingBaesStatus = false;
 
+  // Variables for BAES selection and management
+  bool _isAddingBaes = false;
+  bool _isFloorMode = false;
+  Baes? _selectedBaes;
+  int? _selectedBaesIndex;
+  List<Etage> _batimentEtages = [];
+
   // Paramètres pour la vue globale du site
   double siteZoom = 13.0;
 
@@ -273,7 +280,6 @@ class _VisualisationCartePageState extends State<VisualisationCartePage> {
           List<Marker> markers = [];
           if (floorData['baes'] != null) {
             Map baes = floorData['baes'];
-
             // Debug: Print the BAES data
             print("BAES data in _loadFloorView: $baes");
 
@@ -920,6 +926,163 @@ class _VisualisationCartePageState extends State<VisualisationCartePage> {
     });
   }
 
+  // Met à jour les marqueurs BAES, en mettant en évidence celui qui est sélectionné
+  void _updateBaesMarkers() {
+    if (_selFloorId == null) return;
+
+    setState(() {
+      _floorMarkers =
+          Baes.allBaes.where((b) => b.etageId == _selFloorId).map((b) {
+        final hasErr = b.erreurs.any((e) => !e.isSolved && !e.isIgnored);
+        final hasIgnoredErr = b.erreurs.any((e) => e.isIgnored);
+        final isSelected = _selectedBaes != null && _selectedBaes!.id == b.id;
+
+        return Marker(
+          point: LatLng(b.position['lat'], b.position['lng']),
+          width: 30,
+          height: 30,
+          child: GestureDetector(
+            onTap: () => _handleBaesMarkerTap(b, Baes.allBaes.indexOf(b)),
+            child: Icon(
+              Icons.lightbulb,
+              color: isSelected
+                  ? Colors.orange
+                  : (hasErr
+                      ? Colors.red
+                      : (hasIgnoredErr ? Colors.orange : Colors.green)),
+            ),
+          ),
+        );
+      }).toList();
+    });
+  }
+
+  void _handleBaesMarkerTap(Baes baes, int markerIndex) {
+    // Si le mode placement BAES est activé
+    if (_isAddingBaes && _isFloorMode && _selFloorId != null) {
+      setState(() {
+        // Si un BAES est déjà sélectionné, le désélectionner
+        if (_selectedBaes != null) {
+          // Si c'est le même BAES, le désélectionner
+          if (_selectedBaes!.id == baes.id) {
+            _selectedBaes = null;
+            _selectedBaesIndex = null;
+            return;
+          }
+        }
+
+        // Sélectionner le BAES cliqué
+        _selectedBaes = baes;
+        _selectedBaesIndex = markerIndex;
+
+        // Mettre à jour le marqueur pour le rendre orange (sélectionné)
+        _updateBaesMarkers();
+      });
+    } else if (_isFloorMode && _selFloorId != null && !_isAddingBaes) {
+      // Si on n'est pas en mode placement BAES, afficher les informations du BAES
+      // Trouver le nom de l'étage actuel
+      String floorName = "";
+      for (var floor in _batimentEtages) {
+        if (floor.id == _selFloorId) {
+          floorName = floor.name;
+          break;
+        }
+      }
+
+      // Vérifier s'il y a des erreurs de connexion actives (non résolues et non ignorées)
+      bool statusConnection = baes.erreurs.any((e) =>
+          (e.typeErreur == 'connection' ||
+              e.typeErreur == 'erreur_connexion') &&
+          !e.isSolved &&
+          !e.isIgnored);
+
+      // Vérifier s'il y a des erreurs de batterie actives (non résolues et non ignorées)
+      bool batteryError = baes.erreurs.any((e) =>
+          (e.typeErreur == 'battery' || e.typeErreur == 'erreur_batterie') &&
+          !e.isSolved &&
+          !e.isIgnored);
+
+      // Vérifier si des erreurs de connexion sont ignorées
+      bool conectionErrorIgnored = baes.erreurs.any((e) =>
+          (e.typeErreur == 'connection' ||
+              e.typeErreur == 'erreur_connexion') &&
+          e.isIgnored);
+
+      // Vérifier si des erreurs de batterie sont ignorées
+      bool batteryErrorIgnored = baes.erreurs.any((e) =>
+          (e.typeErreur == 'battery' || e.typeErreur == 'erreur_batterie') &&
+          e.isIgnored);
+
+      // Show a dialog with BAES information
+      showDialog(
+        context: context,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: const Text('Information du bloc'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Site: ${_siteProv?.selectedSite?.name ?? ""}'),
+                Text('Bâtiment: ${_selBat?.name ?? ""}'),
+                Text('Étage: $floorName'),
+                Text('ID du bloc: ${baes.id}'),
+                Row(
+                  children: [
+                    const Text(
+                      'Statut: ',
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                    Tooltip(
+                      message: "Connexion",
+                      child: Icon(
+                        Icons.wifi,
+                        color: statusConnection
+                            ? Colors.red
+                            : conectionErrorIgnored
+                                ? Colors.orange
+                                : Colors.green,
+                        size: 16,
+                      ),
+                    ),
+                    Text(statusConnection ? ' Déconnecté' : ' Connecté'),
+                    const SizedBox(width: 8),
+                    Tooltip(
+                      message: "Etat batterie",
+                      child: Icon(
+                        // Check for battery errors in both ways:
+                        // 1. Direct boolean field in BAES data
+                        // 2. Error type "battery" or "erreur_batterie" in erreurs list
+                        batteryError
+                            ? Icons.battery_unknown_outlined
+                            : Icons.battery_full,
+                        color: batteryError
+                            ? Colors.red
+                            : batteryErrorIgnored
+                                ? Colors.orange
+                                : Colors.green,
+                        size: 16,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Fermer'),
+              ),
+            ],
+          );
+        },
+      );
+    }
+  }
+
   Future<void> _loadFloor(int floorId) async {
     if (_selBat == null) return;
     final data = await APIBatiment.getBuildingAllData(_selBat!.id);
@@ -928,17 +1091,12 @@ class _VisualisationCartePageState extends State<VisualisationCartePage> {
       _floors = data.etages;
       _selFloorId = floorId;
       _isFloor = true;
-      _floorMarkers = Baes.allBaes.where((b) => b.etageId == floorId).map((b) {
-        final hasErr = b.erreurs.any((e) => !e.isSolved && !e.isIgnored);
-        return Marker(
-          point: LatLng(b.position['lat'], b.position['lng']),
-          width: 30,
-          height: 30,
-          child:
-              Icon(Icons.lightbulb, color: hasErr ? Colors.red : Colors.green),
-        );
-      }).toList();
+      _batimentEtages = data.etages;
+      _isFloorMode = true;
     });
+
+    // Update the markers
+    _updateBaesMarkers();
 
     final carte = Carte.allCartes.firstWhere((c) => c.etageId == floorId);
     final bytes = (await http.get(Uri.parse(carte.chemin))).bodyBytes;

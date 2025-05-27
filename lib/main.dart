@@ -95,8 +95,6 @@ part 'services/api/erreur_api.dart';
 
 part 'services/general.dart';
 
-part '../docs/view_carte_page.dart';
-
 void main() {
   runApp(
     MultiProvider(
