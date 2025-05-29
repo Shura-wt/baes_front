@@ -76,19 +76,10 @@ class _GestionUtilisateursPageState extends State<GestionUtilisateursPage> {
   }
 
   void _filterUsers(AuthProvider authProvider) {
-    if (authProvider.isSuperAdmin) {
-      // Super admin voit tous les utilisateurs
+    if (authProvider.isSuperAdmin || authProvider.isAdmin) {
+      // Super admin et admin voient tous les utilisateurs
+      // (ceux avec sites et ceux sans sites)
       _filteredUsers = List.from(_users);
-    } else if (authProvider.isAdmin) {
-      // Admin voit uniquement les utilisateurs des sites qui lui sont attribués
-      final currentUserSiteIds =
-          authProvider.currentUser?.sites.map((site) => site.id).toSet() ?? {};
-
-      _filteredUsers = _users.where((user) {
-        // Vérifier si l'utilisateur a au moins un site en commun avec l'admin
-        final userSiteIds = user.sites.map((site) => site.id).toSet();
-        return userSiteIds.intersection(currentUserSiteIds).isNotEmpty;
-      }).toList();
     } else {
       // Autres rôles ne voient aucun utilisateur
       _filteredUsers = [];

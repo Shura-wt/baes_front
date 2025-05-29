@@ -1,7 +1,17 @@
 part of '../main.dart';
 
 class VisualisationCartePage extends StatefulWidget {
-  const VisualisationCartePage({Key? key}) : super(key: key);
+  const VisualisationCartePage({super.key});
+
+  // Static reference to the current state
+  static _VisualisationCartePageState? _instance;
+
+  // Static method to refresh data
+  static Future<void> refreshData() async {
+    if (_instance != null && _instance!.mounted) {
+      await _instance!._loadApiData();
+    }
+  }
 
   @override
   _VisualisationCartePageState createState() => _VisualisationCartePageState();
@@ -81,6 +91,9 @@ class _VisualisationCartePageState extends State<VisualisationCartePage> {
   void initState() {
     super.initState();
 
+    // Set the static instance
+    VisualisationCartePage._instance = this;
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _siteProv = Provider.of<SiteProvider>(context, listen: false);
       _siteProv!.addListener(_onSiteChanged);
@@ -98,6 +111,11 @@ class _VisualisationCartePageState extends State<VisualisationCartePage> {
 
   @override
   void dispose() {
+    // Clear the static instance if it's this instance
+    if (VisualisationCartePage._instance == this) {
+      VisualisationCartePage._instance = null;
+    }
+
     _siteProv?.removeListener(_onSiteChanged);
     super.dispose();
   }
@@ -1087,18 +1105,26 @@ class _VisualisationCartePageState extends State<VisualisationCartePage> {
     if (_selBat == null) return;
     final data = await APIBatiment.getBuildingAllData(_selBat!.id);
     if (data == null) return;
+
+    final carte = Carte.allCartes.firstWhere((c) => c.etageId == floorId);
+
     setState(() {
       _floors = data.etages;
       _selFloorId = floorId;
       _isFloor = true;
       _batimentEtages = data.etages;
       _isFloorMode = true;
+      _floorCarte =
+          carte; // Store the carte in state so FloorMapView can use it
     });
 
     // Update the markers
     _updateBaesMarkers();
 
-    final carte = Carte.allCartes.firstWhere((c) => c.etageId == floorId);
+    // We don't call _floorController.move() here anymore
+    // Instead, we let the FloorMapView widget handle the map initialization
+    // This ensures each floor uses its own zoom level when loaded
+
     final bytes = (await http.get(Uri.parse(carte.chemin))).bodyBytes;
     ui.decodeImageFromList(bytes, (img) {
       final w = img.width.toDouble(), h = img.height.toDouble();
@@ -1106,7 +1132,6 @@ class _VisualisationCartePageState extends State<VisualisationCartePage> {
       setState(() {
         _floorEffW = w * scale;
         _floorEffH = h * scale;
-        _floorCarte = carte;
         _floorImage = MemoryImage(bytes);
       });
     });
@@ -1145,7 +1170,12 @@ class _VisualisationCartePageState extends State<VisualisationCartePage> {
         // ─── Site ──────────────────────────────────────────
         if (!_isFloor)
           _siteCarte == null || _siteImage == null
-              ? Center(child: CircularProgressIndicator())
+              ? Center(
+                  child: isLoading
+                      ? CircularProgressIndicator()
+                      : Text("Aucune carte disponible",
+                          style: TextStyle(fontSize: 18)),
+                )
               : SiteMapView(
                   key: ValueKey('site_${_siteCarte!.siteId}'),
                   controller: _siteController,
@@ -1160,7 +1190,12 @@ class _VisualisationCartePageState extends State<VisualisationCartePage> {
         // ─── Étage ─────────────────────────────────────────
         if (_isFloor)
           _floorCarte == null || _floorImage == null
-              ? Center(child: CircularProgressIndicator())
+              ? Center(
+                  child: isLoading
+                      ? CircularProgressIndicator()
+                      : Text("Aucune carte disponible",
+                          style: TextStyle(fontSize: 18)),
+                )
               : FloorMapView(
                   key: ValueKey('floor_${_selFloorId}'),
                   controller: _floorController,

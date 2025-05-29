@@ -165,7 +165,11 @@ class _GestionCartePageState extends State<GestionCartePage>
     // Chargement des données de la carte pour le site sélectionné
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        _loadSiteMapData();
+        // Call refreshData on VisualisationCartePage to update all data
+        VisualisationCartePage.refreshData().then((_) {
+          // Then load site map data
+          _loadSiteMapData();
+        });
       }
     });
   }
@@ -198,7 +202,11 @@ class _GestionCartePageState extends State<GestionCartePage>
 
       // Reload site map data for the newly selected site
       if (mounted) {
-        _loadSiteMapData();
+        // Call refreshData on VisualisationCartePage to update all data
+        VisualisationCartePage.refreshData().then((_) {
+          // Then load site map data
+          _loadSiteMapData();
+        });
       }
     }
   }
@@ -217,6 +225,9 @@ class _GestionCartePageState extends State<GestionCartePage>
     }
 
     try {
+      // Rafraîchir les données complètes du site (avec bâtiments) pour assurer l'affichage des polygones
+      await siteProvider.refreshSiteData(selectedSite.id);
+
       // Récupère la carte du site depuis l'API
       final carte = await APICarte.getCarteBySiteId(selectedSite.id);
 
@@ -1024,16 +1035,10 @@ class _GestionCartePageState extends State<GestionCartePage>
               height: 30,
               child: GestureDetector(
                 onTap: () => _handleBaesMarkerTap(baes, i),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: markerColor,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.lightbulb,
-                    color: Colors.white,
-                    size: 20,
-                  ),
+                child: Icon(
+                  Icons.lightbulb,
+                  color: markerColor,
+                  size: 20,
                 ),
               ),
             ),
@@ -1056,6 +1061,12 @@ class _GestionCartePageState extends State<GestionCartePage>
       if (!mounted) {
         return;
       }
+
+      // Effacer les marqueurs existants avant de charger les nouveaux
+      // Ceci est une sécurité supplémentaire pour éviter les marqueurs fantômes
+      setState(() {
+        _baesMarkers.clear();
+      });
 
       // Récupérer les erreurs pour chaque BAES
       for (var baes in Baes.allBaes.where((b) => b.etageId == etageId)) {
@@ -1428,10 +1439,18 @@ class _GestionCartePageState extends State<GestionCartePage>
 
     _selectedFloorId = floorId;
 
-    // Réinitialiser les dimensions de la carte
+    // Réinitialiser les dimensions de la carte et effacer les marqueurs immédiatement
+    // pour éviter les marqueurs fantômes pendant le chargement
     setState(() {
       _floorEffectiveWidth = null;
       _floorEffectiveHeight = null;
+
+      // Réinitialiser la sélection
+      _selectedBaes = null;
+      _selectedBaesIndex = null;
+
+      // Effacer les marqueurs immédiatement pour éviter les marqueurs fantômes
+      _baesMarkers.clear();
     });
 
     // Load floor map data
@@ -1771,10 +1790,13 @@ class _GestionCartePageState extends State<GestionCartePage>
 
   // Affiche une boîte de dialogue de confirmation pour la suppression d'un étage
   void _showFloorDeleteConfirmationDialog(Etage floor) {
+    print(
+        "FLOOR DELETE DIALOG: Showing confirmation dialog for floor '${floor.name}' (ID: ${floor.id})");
+
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (BuildContext context) {
+      builder: (BuildContext confirmContext) {
         return AlertDialog(
           title: const Text("Confirmation de suppression"),
           content: Text(
@@ -1782,17 +1804,33 @@ class _GestionCartePageState extends State<GestionCartePage>
           actions: [
             TextButton(
               onPressed: () {
-                Navigator.of(context).pop();
+                print("FLOOR DELETE DIALOG: Cancel button pressed");
+                Navigator.of(confirmContext).pop();
               },
               child: const Text("Annuler"),
             ),
             TextButton(
-              onPressed: () {
-                Navigator.of(context)
-                    .pop(); // Ferme la boîte de dialogue de confirmation
-                Navigator.of(context)
-                    .pop(); // Ferme la boîte de dialogue d'édition
-                _deleteFloor(floor.id);
+              onPressed: () async {
+                print(
+                    "FLOOR DELETE DIALOG: Delete button pressed for floor ID ${floor.id}");
+
+                // Ferme la boîte de dialogue de confirmation
+                Navigator.of(confirmContext).pop();
+                print("FLOOR DELETE DIALOG: Confirmation dialog closed");
+
+                // Si nous sommes dans un contexte d'édition, ferme également ce dialogue
+                if (ModalRoute.of(context)?.settings.name == null) {
+                  print("FLOOR DELETE DIALOG: Closing edit dialog");
+                  Navigator.of(context).pop();
+                }
+
+                // Appelle la méthode de suppression avec un court délai pour s'assurer que les dialogues sont fermés
+                await Future.delayed(const Duration(milliseconds: 100));
+                if (mounted) {
+                  print(
+                      "FLOOR DELETE DIALOG: Calling _deleteFloor for floor ID ${floor.id}");
+                  _deleteFloor(floor.id);
+                }
               },
               style: TextButton.styleFrom(
                 foregroundColor: Colors.red,
@@ -1875,11 +1913,15 @@ class _GestionCartePageState extends State<GestionCartePage>
   Future<void> _deleteFloor(int floorId) async {
     if (!mounted) return;
 
+    print("FLOOR DELETE: Starting deletion process for floor ID $floorId");
+
     // Affiche un indicateur de chargement
+    BuildContext? dialogContext;
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (BuildContext context) {
+        dialogContext = context;
         return const AlertDialog(
           content: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1894,49 +1936,93 @@ class _GestionCartePageState extends State<GestionCartePage>
     );
 
     try {
+      print("FLOOR DELETE: Calling API to delete floor ID $floorId");
       // Appelle l'API pour supprimer l'étage
       final success = await BaesApi.deleteFloor(floorId);
+      print("FLOOR DELETE: API response for floor ID $floorId: $success");
 
       // Vérifie si le widget est toujours monté après l'opération asynchrone
-      if (!mounted) return;
+      if (!mounted) {
+        print("FLOOR DELETE: Widget not mounted after API call");
+        return;
+      }
 
       // Ferme le dialogue de chargement
-      Navigator.of(context).pop();
+      if (dialogContext != null) {
+        print("FLOOR DELETE: Attempting to close loading dialog");
+        try {
+          if (Navigator.canPop(dialogContext!)) {
+            print("FLOOR DELETE: Closing loading dialog");
+            Navigator.of(dialogContext!).pop();
+          } else {
+            print("FLOOR DELETE: Cannot pop dialog - not in navigator stack");
+          }
+        } catch (e) {
+          print("FLOOR DELETE: Error closing dialog: $e");
+        }
+      } else {
+        print("FLOOR DELETE: Cannot close dialog - dialogContext is null");
+      }
 
       if (success) {
+        print("FLOOR DELETE: Floor ID $floorId deleted successfully");
         // L'étage a été supprimé avec succès
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Étage supprimé avec succès")),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Étage supprimé avec succès")),
+          );
 
-        // Supprime l'étage de la liste des étages
-        setState(() {
-          _batimentEtages.removeWhere((floor) => floor.id == floorId);
+          // Supprime l'étage de la liste des étages et force la mise à jour de l'UI
+          setState(() {
+            _batimentEtages.removeWhere((floor) => floor.id == floorId);
+            print("FLOOR DELETE: Updated floor list after deletion");
 
-          // Si l'étage supprimé était l'étage sélectionné, sélectionne le premier étage de la liste
-          if (_selectedFloorId == floorId) {
-            _selectedFloorId =
-                _batimentEtages.isNotEmpty ? _batimentEtages.first.id : null;
+            // Si l'étage supprimé était l'étage sélectionné, sélectionne le premier étage de la liste
+            if (_selectedFloorId == floorId) {
+              _selectedFloorId =
+                  _batimentEtages.isNotEmpty ? _batimentEtages.first.id : null;
+              print(
+                  "FLOOR DELETE: Selected floor was deleted, new selected floor ID: $_selectedFloorId");
 
-            // Charge les données de la carte pour le nouvel étage sélectionné
-            if (_selectedFloorId != null && _selectedFloorId! > 0) {
-              _loadFloorMapData(_selectedFloorId!);
+              // Charge les données de la carte pour le nouvel étage sélectionné
+              if (_selectedFloorId != null && _selectedFloorId! > 0) {
+                _loadFloorMapData(_selectedFloorId!);
+                print("FLOOR DELETE: Loading map data for new selected floor");
+              }
             }
-          }
-        });
+          });
+        }
       } else {
+        print("FLOOR DELETE: Failed to delete floor ID $floorId");
         // Erreur lors de la suppression de l'étage
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text("Erreur lors de la suppression de l'étage")),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text("Erreur lors de la suppression de l'étage")),
+          );
+        }
       }
     } catch (e) {
+      print("FLOOR DELETE: Exception during deletion of floor ID $floorId: $e");
       // Vérifie si le widget est toujours monté après l'opération asynchrone
       if (!mounted) return;
 
       // Ferme le dialogue de chargement en cas d'erreur
-      Navigator.of(context).pop();
+      if (dialogContext != null) {
+        print(
+            "FLOOR DELETE: Attempting to close loading dialog after exception");
+        try {
+          if (Navigator.canPop(dialogContext!)) {
+            print("FLOOR DELETE: Closing loading dialog after exception");
+            Navigator.of(dialogContext!).pop();
+          } else {
+            print(
+                "FLOOR DELETE: Cannot pop dialog after exception - not in navigator stack");
+          }
+        } catch (e) {
+          print("FLOOR DELETE: Error closing dialog after exception: $e");
+        }
+      }
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Erreur: $e")),
@@ -2726,16 +2812,14 @@ class _GestionCartePageState extends State<GestionCartePage>
               mainAxisSize: MainAxisSize.min,
               children: [
                 // FAB : Sauvegarder la carte d'étage (visible si une image est uploadée ou si un étage est sélectionné)
-                if (_uploadedFloorImage != null ||
-                    (_selectedFloorId != null && _selectedFloorId! > 0))
+                if (_uploadedFloorImage != null || _selectedFloorId != null)
                   FloatingActionButton(
                     heroTag: 'saveFloorMap',
                     onPressed: _saveFloorMap,
                     tooltip: "Sauvegarder la carte d'étage",
                     child: const Icon(Icons.save),
                   ),
-                if (_uploadedFloorImage != null ||
-                    (_selectedFloorId != null && _selectedFloorId! > 0))
+                if (_uploadedFloorImage != null || _selectedFloorId != null)
                   const SizedBox(height: 10),
                 // FAB : Modifier/Supprimer l'étage (visible seulement si un étage est sélectionné et n'est pas un étage local)
                 if (_selectedFloorId != null && _selectedFloorId! > 0)
@@ -3006,36 +3090,38 @@ class _GestionCartePageState extends State<GestionCartePage>
                   height: 10,
                 ),
                 //floating action button pour ajouter un point BAES
-                FloatingActionButton(
-                  heroTag: 'addBaesPoint',
-                  onPressed: () {
-                    print("=== FAB PLACER BAES CLIQUÉ ===");
-                    print("État actuel de _isAddingBaes: $_isAddingBaes");
-                    setState(() {
-                      _isAddingBaes = !_isAddingBaes;
-                      print("Nouvel état de _isAddingBaes: $_isAddingBaes");
-                    });
-                    print(
-                        "Mode ajout de BAES ${_isAddingBaes ? "activé" : "désactivé"}");
-                  },
-                  tooltip: _isAddingBaes
-                      ? "Désactiver le mode ajout de BAES"
-                      : "Ajouter des BAES",
-                  backgroundColor: _isAddingBaes ? Colors.red : null,
-                  child: Icon(
-                      _isAddingBaes ? Icons.close : Icons.add_location_alt),
-                ),
+                //affiche le FAB si une carte est chargé dans l'etage :
+                if (_uploadedFloorImage != null ||
+                    (_selectedFloorId != null && _selectedFloorId! > 0))
+                  FloatingActionButton(
+                    heroTag: 'addBaesPoint',
+                    onPressed: () {
+                      print("=== FAB PLACER BAES CLIQUÉ ===");
+                      print("État actuel de _isAddingBaes: $_isAddingBaes");
+                      setState(() {
+                        _isAddingBaes = !_isAddingBaes;
+                        print("Nouvel état de _isAddingBaes: $_isAddingBaes");
+                      });
+                      print(
+                          "Mode ajout de BAES ${_isAddingBaes ? "activé" : "désactivé"}");
+                    },
+                    tooltip: _isAddingBaes
+                        ? "Désactiver le mode ajout de BAES"
+                        : "Ajouter des BAES",
+                    backgroundColor: _isAddingBaes ? Colors.red : null,
+                    child: Icon(
+                        _isAddingBaes ? Icons.close : Icons.add_location_alt),
+                  ),
+
                 const SizedBox(height: 10),
 
-                if (_selectedFloorId != null && _selectedFloorId! > 0)
-
-                  // FAB : Charger une carte d'étage (toujours visible en mode étage)
-                  FloatingActionButton(
-                    heroTag: 'uploadFloorImage',
-                    onPressed: _uploadFloorImage,
-                    tooltip: "Charger une carte d'étage",
-                    child: const Icon(Icons.upload_file),
-                  ),
+                // FAB : Charger une carte d'étage (toujours visible en mode étage)
+                FloatingActionButton(
+                  heroTag: 'uploadFloorImage',
+                  onPressed: _uploadFloorImage,
+                  tooltip: "Charger une carte d'étage",
+                  child: const Icon(Icons.upload_file),
+                ),
               ],
             )
           : Column(

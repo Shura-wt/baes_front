@@ -4,43 +4,54 @@ class UtilisateurApi {
   static String baseUrl = Config.baseUrl;
 
   /// Crée un nouvel utilisateur via l'API.
-  /// On envoie "login", une liste de rôles (par exemple, ['user']), optionnellement "password",
-  /// et optionnellement une liste d'IDs de sites.
+  /// On envoie "login", optionnellement "password",
+  /// et optionnellement une liste de rôles et une liste d'IDs de sites.
   /// La réponse doit contenir id, login, et la liste des sites avec leurs rôles.
+  ///
+  /// Route: POST /users/
   static Future<Utilisateur> createUser({
     required String username,
-    required List<String> roles,
     String? password,
+    List<String>? roles,
     List<int>? sites,
   }) async {
     final url = Uri.parse('$baseUrl/users/');
     final Map<String, dynamic> body = {
       'login': username,
-      'roles': roles,
     };
     if (password != null && password.isNotEmpty) {
       body['password'] = password;
+    }
+    if (roles != null && roles.isNotEmpty) {
+      body['roles'] = roles;
     }
     if (sites != null && sites.isNotEmpty) {
       body['sites'] = sites;
     }
 
-    // Log the API call
+    print('Envoi de la requête POST à $url');
+    print('Corps de la requête: ${jsonEncode(body)}');
 
-    final response = await http.post(
-      url,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(body),
-    );
+    try {
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(body),
+      );
 
-    // Log the API response
+      print('Réponse reçue: Status ${response.statusCode}');
+      print('Corps de la réponse: ${response.body}');
 
-    if (response.statusCode == 201) {
-      final json = jsonDecode(response.body);
-      return Utilisateur.fromJson(json);
-    } else {
-      throw Exception(
-          'Erreur lors de la création de l\'utilisateur. Code HTTP: ${response.statusCode}');
+      if (response.statusCode == 201) {
+        final json = jsonDecode(response.body);
+        return Utilisateur.fromJson(json);
+      } else {
+        throw Exception(
+            'Erreur lors de la création de l\'utilisateur. Code HTTP: ${response.statusCode}, Réponse: ${response.body}');
+      }
+    } catch (e) {
+      print('Exception lors de l\'envoi de la requête: $e');
+      rethrow;
     }
   }
 

@@ -339,20 +339,23 @@ class _UtilisateurDialogState extends State<UtilisateurDialog> {
                                           child: Container(
                                             padding: const EdgeInsets.all(8.0),
                                             decoration: BoxDecoration(
-                                              color: Colors.blue.withOpacity(0.1),
-                                              borderRadius: BorderRadius.circular(4.0),
-                                              border: Border.all(color: Colors.blue.withOpacity(0.3)),
+                                              color:
+                                                  Colors.blue.withOpacity(0.1),
+                                              borderRadius:
+                                                  BorderRadius.circular(4.0),
+                                              border: Border.all(
+                                                  color: Colors.blue
+                                                      .withOpacity(0.3)),
                                             ),
                                             child: Row(
                                               mainAxisSize: MainAxisSize.min,
                                               children: [
-                                                const Icon(Icons.check_circle, color: Colors.blue, size: 16),
+                                                const Icon(Icons.check_circle,
+                                                    color: Colors.blue,
+                                                    size: 16),
                                                 const SizedBox(width: 8),
                                                 Text(
-                                                  'Rôle assigné: ${_availableRoles.firstWhere(
-                                                    (r) => r.id == _siteRolesMap[site.id]!.first,
-                                                    orElse: () => Role(id: 0, name: 'Inconnu')
-                                                  ).name}',
+                                                  'Rôle assigné: ${_availableRoles.firstWhere((r) => r.id == _siteRolesMap[site.id]!.first, orElse: () => Role(id: 0, name: 'Inconnu')).name}',
                                                   style: const TextStyle(
                                                     fontWeight: FontWeight.bold,
                                                   ),

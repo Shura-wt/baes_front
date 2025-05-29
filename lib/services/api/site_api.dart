@@ -54,4 +54,26 @@ class SiteApi {
       return null;
     }
   }
+
+  /// Supprime un site via l'API.
+  /// En cas de succès (HTTP 200 ou 204), retourne true.
+  /// En cas d'échec, retourne false.
+  static Future<bool> deleteSite(int siteId) async {
+    try {
+      final url = Uri.parse('$baseUrl/sites/$siteId/');
+
+      // Log the API call
+      print("API CALL: DELETE $baseUrl/sites/$siteId/");
+
+      final response = await http.delete(url);
+
+      // Log the API response
+      print("API RESPONSE: ${response.statusCode}");
+
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print("Error deleting site: $e");
+      return false;
+    }
+  }
 }

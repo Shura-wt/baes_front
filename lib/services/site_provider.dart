@@ -211,15 +211,58 @@ class SiteProvider with ChangeNotifier {
 
           // Mettre à jour la liste completeSites immédiatement
           updateCompleteSites();
-          print('Liste completeSites mise à jour: ${completeSites.length} sites');
+          print(
+              'Liste completeSites mise à jour: ${completeSites.length} sites');
         } else {
           print('Format de données invalide: une liste était attendue');
         }
       } else {
-        print('Erreur lors de la récupération des sites. Code: ${response.statusCode}');
+        print(
+            'Erreur lors de la récupération des sites. Code: ${response.statusCode}');
       }
     } catch (e) {
       print('Erreur lors du chargement de tous les sites: $e');
+    }
+  }
+
+  /// Supprime un site via l'API.
+  /// En cas de succès, met à jour les listes de sites et retourne true.
+  /// En cas d'échec, retourne false.
+  Future<bool> deleteSite(int siteId) async {
+    try {
+      print('Début de la suppression du site $siteId');
+
+      // Appel à l'API pour supprimer le site
+      final success = await SiteApi.deleteSite(siteId);
+
+      if (success) {
+        print('Site $siteId supprimé avec succès');
+
+        // Supprimer le site de la liste des sites
+        _sites.removeWhere((site) => site.id == siteId);
+
+        // Si le site supprimé était le site sélectionné, sélectionner un autre site
+        if (_selectedSite != null && _selectedSite!.id == siteId) {
+          _selectedSite = _sites.isNotEmpty ? _sites.first : null;
+        }
+
+        // Supprimer le site de la liste globale
+        Site.allSites.removeWhere((site) => site.id == siteId);
+
+        // Mettre à jour la liste completeSites
+        updateCompleteSites();
+
+        // Notifier les écouteurs
+        notifyListeners();
+
+        return true;
+      } else {
+        print('Échec de la suppression du site $siteId');
+        return false;
+      }
+    } catch (e) {
+      print('Erreur lors de la suppression du site $siteId: $e');
+      return false;
     }
   }
 }

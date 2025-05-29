@@ -91,7 +91,6 @@ class BaesApi {
     }
   }
 
-
   /// Récupère la carte d'un étage par son ID
   /// Cette méthode est un proxy vers APICarte.getFloorMapByFloorId()
   static Future<Carte?> getFloorMapByFloorId(int floorId) async {
@@ -173,18 +172,31 @@ class BaesApi {
   /// Supprime un étage
   static Future<bool> deleteFloor(int etageId) async {
     try {
+      // Log the API call
+      print("API CALL: DELETE $baseUrl/etages/$etageId");
+
       // Envoyer la requête
       final response = await http.delete(
         Uri.parse('$baseUrl/etages/$etageId'),
         headers: {'Content-Type': 'application/json'},
       );
 
-      if (response.statusCode == 200) {
+      // Log the API response
+      print("API RESPONSE: ${response.statusCode}");
+      if (response.body.isNotEmpty) {
+        print("API RESPONSE BODY: ${response.body}");
+      }
+
+      // Consider any 2xx status code as success
+      if (response.statusCode >= 200 && response.statusCode < 300) {
         return true;
       } else {
+        print(
+            "API ERROR: Failed to delete floor. Status code: ${response.statusCode}");
         return false;
       }
     } catch (e) {
+      print("API EXCEPTION: $e");
       return false;
     }
   }

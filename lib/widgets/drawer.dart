@@ -447,9 +447,26 @@ class _LeftDrawerState extends State<LeftDrawer> {
                         overflow: TextOverflow.ellipsis,
                       ),
                     if (canChangeSite)
-                      IconButton(
-                        icon: const Icon(Icons.add, color: Colors.white),
-                        onPressed: _showNewSiteDialog,
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Toujours afficher le bouton d'ajout si l'utilisateur est admin/superadmin
+                          IconButton(
+                            icon: const Icon(Icons.add, color: Colors.white),
+                            onPressed: _showNewSiteDialog,
+                            tooltip: 'Ajouter un site',
+                          ),
+                          // Afficher le bouton de suppression uniquement s'il y a un site sélectionné
+                          if (currentSiteId != null)
+                            IconButton(
+                              icon:
+                                  const Icon(Icons.delete, color: Colors.white),
+                              onPressed: () =>
+                                  _showDeleteSiteConfirmationDialog(
+                                      currentSiteId),
+                              tooltip: 'Supprimer le site',
+                            ),
+                        ],
                       ),
                   ],
                 ),
@@ -675,7 +692,6 @@ class _LeftDrawerState extends State<LeftDrawer> {
                         Provider.of<SiteProvider>(context, listen: false);
                     final newSite = await siteProvider.createSite(newSiteName);
                     // On met à jour directement le provider, pas besoin d'une variable locale ici
-                    siteProvider.setSelectedSite(newSite);
                   } catch (e) {
                     // Erreur lors de la création du site
                   }
@@ -686,6 +702,125 @@ class _LeftDrawerState extends State<LeftDrawer> {
             ),
           ],
         );
+      },
+    );
+  }
+
+  /// Affiche une boîte de dialogue de confirmation pour supprimer un site.
+  void _showDeleteSiteConfirmationDialog(int siteId) {
+    // Récupérer le nom du site à partir de son ID
+    final siteProvider = Provider.of<SiteProvider>(context, listen: false);
+    final site = siteProvider.sites.firstWhere(
+      (site) => site.id == siteId,
+      orElse: () =>
+          SiteAssociation(id: siteId, name: "Site inconnu", roles: []),
+    );
+
+    showDialog(
+      context: context,
+      barrierDismissible:
+          false, // Empêche la fermeture en cliquant à l'extérieur
+      builder: (dialogContext) {
+        // Variable pour suivre l'état de la suppression
+        bool isDeleting = false;
+
+        return StatefulBuilder(builder: (context, setState) {
+          return AlertDialog(
+            title: const Text("Confirmation de suppression"),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                    "Êtes-vous sûr de vouloir supprimer le site '${site.name}' ?"),
+                const SizedBox(height: 10),
+                const Text("Cette action est irréversible."),
+                if (isDeleting) ...[
+                  const SizedBox(height: 20),
+                  const Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                  const SizedBox(height: 10),
+                  const Center(
+                    child: Text("Suppression en cours..."),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: isDeleting
+                    ? null // Désactiver le bouton pendant la suppression
+                    : () => Navigator.pop(dialogContext),
+                child: const Text("Annuler"),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: isDeleting
+                    ? null // Désactiver le bouton pendant la suppression
+                    : () async {
+                        // Marquer comme en cours de suppression
+                        setState(() {
+                          isDeleting = true;
+                        });
+
+                        try {
+                          // Appeler la méthode de suppression du site
+                          final success = await siteProvider.deleteSite(siteId);
+
+                          // Fermer la boîte de dialogue uniquement si la suppression a réussi
+                          if (success && dialogContext.mounted) {
+                            Navigator.pop(dialogContext);
+
+                            // Afficher un message de confirmation
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                    "Le site '${site.name}' a été supprimé avec succès."),
+                                backgroundColor: Colors.green,
+                              ),
+                            );
+                          } else if (dialogContext.mounted) {
+                            // En cas d'échec, réactiver les boutons
+                            setState(() {
+                              isDeleting = false;
+                            });
+
+                            // Afficher un message d'erreur
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content:
+                                    Text("Échec de la suppression du site."),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                        } catch (e) {
+                          // En cas d'erreur, réactiver les boutons si le contexte est toujours valide
+                          if (dialogContext.mounted) {
+                            setState(() {
+                              isDeleting = false;
+                            });
+
+                            // Afficher un message d'erreur
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                    "Erreur lors de la suppression du site: $e"),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                        }
+                      },
+                child: const Text("Supprimer"),
+              ),
+            ],
+          );
+        });
       },
     );
   }
